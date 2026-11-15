@@ -62,12 +62,8 @@ fun rememberPlayerState(p: Player): PS {
     // mengurangi recomposition seluruh UI pada perangkat dengan RAM/CPU rendah.
     LaunchedEffect(p) {
         while (true) {
-            if (p.isPlaying) {
-                delay(1_000)
-                s = snap(p)
-            } else {
-                delay(1_000)
-            }
+            delay(1_500)
+            if (p.isPlaying) s = snap(p)
         }
     }
     return s

@@ -9,6 +9,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.Executors
 
 @Serializable
 data class UserPlaylist(val id: String, val name: String, val tracks: List<Track> = emptyList())
@@ -43,6 +44,10 @@ class LibraryStore(context: Context) {
     private val file = File(dir, "library.json")
     private val downloadDir = File(dir, "downloads").apply { mkdirs() }
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    // Semua penulisan metadata dilakukan serial di background, bukan di main thread.
+    private val ioExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "alura-library-io").apply { isDaemon = true }
+    }
 
     private val _data = MutableStateFlow(load())
     val data: StateFlow<LibraryData> = _data.asStateFlow()
@@ -60,11 +65,17 @@ class LibraryStore(context: Context) {
     @Synchronized
     private fun edit(f: (LibraryData) -> LibraryData) {
         val n = f(_data.value)
-        _data.value = n
-        runCatching {
-            val tmp = File(dir, "library.json.tmp")
-            tmp.writeText(json.encodeToString(LibraryData.serializer(), n))
-            tmp.renameTo(file)
+        _data.value = n // UI langsung menerima perubahan; I/O tidak menahan frame.
+        ioExecutor.execute {
+            runCatching {
+                val encoded = json.encodeToString(LibraryData.serializer(), n)
+                val tmp = File(dir, "library.json.tmp")
+                tmp.writeText(encoded)
+                if (!tmp.renameTo(file)) {
+                    file.writeText(encoded)
+                    tmp.delete()
+                }
+            }
         }
     }
 

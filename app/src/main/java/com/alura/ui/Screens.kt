@@ -88,13 +88,16 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
     val trList = (tr as? Resource.Success)?.data.orEmpty()
     val plList = (pls as? Resource.Success)?.data.orEmpty().take(5)
-    val recent = vm.recentlyPlayed.take(3).ifEmpty { lib.recent.take(3) }
-    val popular = vm.mostPlayed.take(3)
-    val mix = vm.yourMix
+    // Hasil sorting/statistik tidak perlu dihitung ulang saat posisi lagu berubah.
+    val recent = remember(lib) { vm.recentlyPlayed.take(3).ifEmpty { lib.recent.take(3) } }
+    val popular = remember(lib) { vm.mostPlayed.take(3) }
+    val mix = remember(lib, tr) { vm.yourMix }
     val cur = ps.track?.id
-    val tiles = buildList<Pair<String, Playlist?>> {
-        add("Lagu yang Disukai" to null)
-        plList.forEach { add(it.name to it) }
+    val tiles = remember(plList) {
+        buildList<Pair<String, Playlist?>> {
+            add("Lagu yang Disukai" to null)
+            plList.forEach { add(it.name to it) }
+        }
     }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(18.dp, 18.dp, 18.dp, BOTTOM)) {
         item {
@@ -209,7 +212,7 @@ fun SearchScreen(vm: AppViewModel, ps: PS) {
 }
 
 @Composable
-fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit, onSettings: () -> Unit) {
+fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
     Column(
         Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())
@@ -229,68 +232,7 @@ fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Un
             MenuRow("Favorit", "${lib.favorites.size} Lagu") { onOpen(LibPage.FAVORITES) }
             MenuRow("Download", "${lib.downloads.size} Lagu (offline)") { onOpen(LibPage.DOWNLOADS) }
             MenuRow("Tentang Alura", "Versi, developer, dan dukungan", onAbout)
-            MenuRow("Pengaturan", "Tampilan dan preferensi aplikasi", onSettings)
         }
-    }
-}
-
-
-@Composable
-fun SettingsScreen(currentStyle: AluraStyle, onStyleChange: (AluraStyle) -> Unit, onBack: () -> Unit) {
-    Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(14.dp, 16.dp, 14.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clickable(onClick = onBack), Alignment.Center) { Ico(Icons.BACK, Txt) }
-            Text("Pengaturan", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-            Spacer(Modifier.size(40.dp))
-        }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp, 8.dp, 18.dp, 120.dp)) {
-            Text("TAMPILAN", color = Mut, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-            Text("Pilih gaya Alura", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
-            StyleChoice(
-                title = "Liquid Glass", subtitle = "Nuansa kaca transparan, biru, dan modern",
-                selected = currentStyle == AluraStyle.LIQUID_GLASS,
-                preview = Color(0xFF14243D), accent = Color(0xFF4F8DFF)
-            ) { onStyleChange(AluraStyle.LIQUID_GLASS) }
-            Spacer(Modifier.height(10.dp))
-            StyleChoice(
-                title = "Paper", subtitle = "Terang seperti kertas, bersih, dan nyaman dibaca",
-                selected = currentStyle == AluraStyle.PAPER,
-                preview = Color(0xFFF5F1E8), accent = Color(0xFF315E9B)
-            ) { onStyleChange(AluraStyle.PAPER) }
-            Spacer(Modifier.height(22.dp))
-            Text("TENTANG TAMPILAN", color = Mut, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-            Text("Pilihan tema disimpan otomatis dan tetap digunakan saat Alura dibuka kembali.", color = Mut, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-            Spacer(Modifier.height(18.dp))
-            InfoRow("Tema aktif", if (currentStyle == AluraStyle.LIQUID_GLASS) "Liquid Glass" else "Paper")
-        }
-    }
-}
-
-@Composable
-private fun StyleChoice(
-    title: String, subtitle: String, selected: Boolean,
-    preview: Color, accent: Color, onClick: () -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-            .background(CardC).border(1.dp, if (selected) Acc else Line, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick).padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(76.dp, 62.dp).clip(RoundedCornerShape(12.dp)).background(preview).padding(8.dp)) {
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Box(Modifier.fillMaxWidth(.62f).height(7.dp).clip(CircleShape).background(accent))
-                Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(.12f)))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    repeat(3) { Box(Modifier.weight(1f).height(7.dp).clip(CircleShape).background(Color.White.copy(.2f))) }
-                }
-            }
-        }
-        Column(Modifier.weight(1f).padding(start = 13.dp)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, fontSize = 11.sp, color = Mut, modifier = Modifier.padding(top = 3.dp))
-        }
-        RadioButton(selected = selected, onClick = onClick, colors = RadioButtonDefaults.colors(selectedColor = Acc, unselectedColor = Mut))
     }
 }
 

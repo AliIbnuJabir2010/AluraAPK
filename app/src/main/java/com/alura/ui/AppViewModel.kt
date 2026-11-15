@@ -181,10 +181,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         statsJob = viewModelScope.launch {
             var lastPosition = player.currentPosition
             var lastTrackId: String? = null
+            var pendingTrack: Track? = null
+            var pendingListenMs = 0L
             while (isActive) {
                 delay(5_000)
                 val current = sessionTrack
                 if (current?.id != lastTrackId) {
+                    // Simpan sisa sesi sebelumnya hanya saat lagu berganti.
+                    if (pendingTrack != null && pendingListenMs > 0L) {
+                        store.addListenTime(pendingTrack!!, pendingListenMs)
+                    }
+                    pendingTrack = current
+                    pendingListenMs = 0L
                     lastTrackId = current?.id
                     lastPosition = player.currentPosition
                 }
@@ -193,7 +201,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val delta = (now - lastPosition).coerceIn(0L, 7_000L)
                     if (delta > 0L) {
                         sessionListenMs += delta
-                        store.addListenTime(current, delta)
+                        pendingTrack = current
+                        pendingListenMs += delta
+                        // Hindari update StateFlow + serialisasi JSON setiap 5 detik.
+                        // Satu batch per sekitar 30 detik cukup untuk statistik dengar.
+                        if (pendingListenMs >= 30_000L) {
+                            store.addListenTime(current, pendingListenMs)
+                            pendingListenMs = 0L
+                        }
                         if (!sessionQualified && sessionListenMs >= 30_000L) {
                             store.recordQualifiedPlay(current)
                             sessionQualified = true
@@ -207,7 +222,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    override fun onCleared() { statsJob?.cancel(); PlayerHolder.player(getApplication()).removeListener(playerListener) }
+    override fun onCleared() {
+        statsJob?.cancel()
+        PlayerHolder.player(getApplication()).removeListener(playerListener)
+    }
 
     /** Lagu yang sudah di-download diputar dari file hasil download, sisanya stream dari API. */
     fun play(queue: List<Track>, index: Int) {

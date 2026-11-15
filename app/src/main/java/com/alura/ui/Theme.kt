@@ -4,12 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -23,29 +19,20 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-enum class AluraStyle { LIQUID_GLASS, PAPER }
-
-var activeAluraStyle by mutableStateOf(AluraStyle.LIQUID_GLASS)
-    private set
-
-fun setAluraStyle(style: AluraStyle) { activeAluraStyle = style }
-
-val Bg: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFF5F1E8) else Color(0xFF070B14)
-val CardC: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFFFFCF5) else Color(0xFF111A2B)
-val Card2: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFEAE4D8) else Color(0xFF16213A)
-val Txt: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF242630) else Color(0xFFE8EDF7)
-val Mut: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF77746E) else Color(0xFF8B97B1)
-val Acc: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF315E9B) else Color(0xFF4F8DFF)
-val Line: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFD8D0C2) else Color(0xFF1F2A44)
+val Bg = Color(0xFF070B14)
+val CardC = Color(0xFF111A2B)
+val Card2 = Color(0xFF16213A)
+val Txt = Color(0xFFE8EDF7)
+val Mut = Color(0xFF8B97B1)
+val Acc = Color(0xFF4F8DFF)
+val Line = Color(0xFF1F2A44)
 
 @Composable
 fun AluraTheme(content: @Composable () -> Unit) {
-    val scheme = if (activeAluraStyle == AluraStyle.PAPER) {
-        lightColorScheme(primary = Acc, background = Bg, surface = CardC, onSurface = Txt, onBackground = Txt)
-    } else {
-        darkColorScheme(primary = Acc, background = Bg, surface = Bg, onSurface = Txt, onBackground = Txt)
-    }
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialTheme(
+        colorScheme = darkColorScheme(primary = Acc, background = Bg, surface = Bg, onSurface = Txt, onBackground = Txt),
+        content = content
+    )
 }
 
 /** Ikon digambar dari path SVG 24x24 yang sama dengan preview. */

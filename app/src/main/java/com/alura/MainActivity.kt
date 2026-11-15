@@ -12,18 +12,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -52,30 +50,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val prefs = remember { getSharedPreferences("alura_preferences", MODE_PRIVATE) }
-            var styleName by rememberSaveable { mutableStateOf(prefs.getString("appearance", "LIQUID_GLASS") ?: "LIQUID_GLASS") }
-            val style = runCatching { AluraStyle.valueOf(styleName) }.getOrDefault(AluraStyle.LIQUID_GLASS)
-            setAluraStyle(style)
             AluraTheme {
-                AluraApp(
-                    currentStyle = style,
-                    onStyleChange = { next ->
-                        styleName = next.name
-                        prefs.edit().putString("appearance", next.name).apply()
-                        setAluraStyle(next)
-                    }
-                )
+                AluraApp()
             }
         }
     }
 }
 
 @Composable
-fun AluraApp(
-    vm: AppViewModel = viewModel(),
-    currentStyle: AluraStyle = AluraStyle.LIQUID_GLASS,
-    onStyleChange: (AluraStyle) -> Unit = {}
-) {
+fun AluraApp(vm: AppViewModel = viewModel()) {
     val ctx = LocalContext.current
     val p = remember { PlayerHolder.player(ctx) }
     val ps = rememberPlayerState(p)
@@ -83,7 +66,6 @@ fun AluraApp(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val screenStateHolder = rememberSaveableStateHolder()
     var about by rememberSaveable { mutableStateOf(false) }
-    var settings by rememberSaveable { mutableStateOf(false) }
     var page by rememberSaveable { mutableIntStateOf(-1) }
     var lastPage by remember { mutableIntStateOf(0) }
     if (page >= 0) lastPage = page
@@ -121,9 +103,7 @@ fun AluraApp(
         full = false
     }
 
-    BackHandler(settings && !full) { settings = false }
-
-    BackHandler(about && !full && !settings) {
+    BackHandler(about && !full) {
         about = false
     }
 
@@ -131,7 +111,7 @@ fun AluraApp(
         page = -1
     }
 
-    val showNav = navVisible && !about && !settings && page < 0
+    val showNav = navVisible && !about && page < 0
     val navMotion = spring< androidx.compose.ui.unit.Dp>(
         dampingRatio = 0.72f,
         stiffness = Spring.StiffnessMediumLow
@@ -163,27 +143,14 @@ fun AluraApp(
                 .background(Bg)
                 .nestedScroll(conn)
         ) {
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    val direction = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(
-                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
-                    ) { fullWidth -> direction * (fullWidth / 7) } +
-                        fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium))) togetherWith
-                        (slideOutHorizontally(
-                            animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessLow)
-                        ) { fullWidth -> -direction * (fullWidth / 10) } +
-                            fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium)))
-                },
-                label = "AluraTabTransition"
-            ) { targetTab ->
-                screenStateHolder.SaveableStateProvider(targetTab) {
-                    when (targetTab) {
-                        0 -> HomeScreen(vm, ps, onOpen = { page = it.ordinal })
-                        1 -> SearchScreen(vm, ps)
-                        else -> ProfileScreen(vm, onOpen = { page = it.ordinal }, onAbout = { about = true }, onSettings = { settings = true })
-                    }
+            // Ganti tab secara langsung. AnimatedContent sebelumnya menahan dua layar
+            // sekaligus selama transisi sehingga daftar, gambar, dan state lama tetap
+            // ikut dirender ketika layar baru mulai dibuka.
+            screenStateHolder.SaveableStateProvider(tab) {
+                when (tab) {
+                    0 -> HomeScreen(vm, ps, onOpen = { page = it.ordinal })
+                    1 -> SearchScreen(vm, ps)
+                    else -> ProfileScreen(vm, onOpen = { page = it.ordinal }, onAbout = { about = true })
                 }
             }
 
@@ -193,14 +160,6 @@ fun AluraApp(
                 exit = slideOutHorizontally(animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { it / 4 } + fadeOut()
             ) {
                 AboutScreen(onBack = { about = false })
-            }
-
-            AnimatedVisibility(
-                settings,
-                enter = slideInHorizontally(animationSpec = spring(dampingRatio = 0.88f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeIn(),
-                exit = slideOutHorizontally(animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { it / 4 } + fadeOut()
-            ) {
-                SettingsScreen(currentStyle = currentStyle, onStyleChange = onStyleChange, onBack = { settings = false })
             }
 
             AnimatedVisibility(
