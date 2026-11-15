@@ -41,6 +41,7 @@ fun GlassNav(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifi
         val tabW = (constraints.maxWidth - 2 * pad) / 3f
         var dragX by remember { mutableStateOf<Float?>(null) }
         val big = dragX != null
+        val preview = dragX?.let { (it / tabW).roundToInt().coerceIn(0, 2) } ?: selected
         val x by animateFloatAsState(
             dragX ?: (selected * tabW),
             if (big) tween(80, easing = LinearEasing) else spring(dampingRatio = 0.55f, stiffness = 300f),
@@ -60,13 +61,14 @@ fun GlassNav(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifi
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         fun upd(px: Float) {
-                            val xx = (px - pad - tabW / 2).coerceIn(0f, 2 * tabW)
-                            dragX = xx
-                            onSel((xx / tabW).roundToInt().coerceIn(0, 2))
+                            dragX = (px - pad - tabW / 2).coerceIn(0f, 2 * tabW)
                         }
                         upd(down.position.x)
                         drag(down.id) { upd(it.position.x); it.consume() }
+                        // Halaman baru berpindah setelah dilepas, ke tab terdekat
+                        val target = ((dragX ?: (selected * tabW)) / tabW).roundToInt().coerceIn(0, 2)
                         dragX = null
+                        onSel(target)
                     }
                 }
         )
@@ -90,7 +92,7 @@ fun GlassNav(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifi
         Row(Modifier.matchParentSize().padding(5.dp)) {
             NAV_ICONS.forEachIndexed { i, ico ->
                 Box(Modifier.weight(1f).fillMaxHeight(), Alignment.Center) {
-                    Ico(ico, if (i == selected) Color.White else Mut, 26.dp)
+                    Ico(ico, if (i == preview) Color.White else Mut, 26.dp)
                 }
             }
         }

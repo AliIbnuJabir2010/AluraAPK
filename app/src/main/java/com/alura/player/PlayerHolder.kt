@@ -8,17 +8,19 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.alura.data.Track
+import com.alura.data.YouTubeMusic
 import com.alura.data.audiusHttpClient
 
 data class PS(val track: Track?, val playing: Boolean, val pos: Long, val dur: Long)
 
-/** Satu player untuk Audius (online) dan file lokal (offline), dipakai UI dan service. */
+/** Satu player untuk stream Audius dan salinan hasil download, dipakai UI dan service. */
 object PlayerHolder {
     private var exo: ExoPlayer? = null
     var queue: List<Track> = emptyList()
@@ -27,7 +29,12 @@ object PlayerHolder {
     fun player(ctx: Context): ExoPlayer = exo ?: ExoPlayer.Builder(ctx.applicationContext)
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
-                DefaultDataSource.Factory(ctx.applicationContext, OkHttpDataSource.Factory(audiusHttpClient))
+                ResolvingDataSource.Factory(
+                    DefaultDataSource.Factory(ctx.applicationContext, OkHttpDataSource.Factory(audiusHttpClient))
+                ) { spec ->
+                    // ytm://<videoId> -> alamat audio YouTube asli (diambil saat mulai diputar)
+                    if (spec.uri.scheme == "ytm") spec.withUri(YouTubeMusic.audioUrl(spec.uri.host.orEmpty()).toUri()) else spec
+                }
             )
         )
         .setAudioAttributes(
@@ -43,6 +50,16 @@ object PlayerHolder {
         p.prepare()
         p.play()
         runCatching { ctx.startService(Intent(ctx, PlaybackService::class.java)) }
+    }
+
+    /** Ganti lagu di antrean (mis. YouTube gagal -> versi Audius) lalu putar lagi. */
+    fun replace(ctx: Context, index: Int, t: Track) {
+        val p = player(ctx)
+        if (index !in queue.indices) return
+        queue = queue.toMutableList().also { it[index] = t }
+        p.replaceMediaItem(index, t.toItem())
+        p.prepare()
+        p.play()
     }
 
     private fun Track.toItem() = MediaItem.Builder()

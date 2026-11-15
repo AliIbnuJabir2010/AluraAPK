@@ -3,18 +3,21 @@ package com.alura.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-enum class MusicSource { AUDIUS, LOCAL }
+@Serializable
+enum class MusicSource { AUDIUS, YOUTUBE }
 
-/** Model domain tunggal: dipakai UI & player untuk online maupun offline. */
+/** Model domain tunggal. Semua audio berasal dari API Audius (stream online atau salinan hasil download). */
+@Serializable
 data class Track(
     val id: String,
     val title: String,
     val artist: String,
     val artworkUrl: String?,
     val durationSec: Int,
-    val source: MusicSource,
-    val streamUri: String,          // URL Audius atau content:// URI lokal
+    val streamUri: String,          // URL stream Audius, atau ytm://<videoId> untuk YouTube Music
     val genre: String? = null,
+    val artistId: String = "",
+    val source: MusicSource = MusicSource.AUDIUS,
 )
 
 data class Artist(val id: String, val name: String, val handle: String, val avatarUrl: String?, val followers: Int)
@@ -39,12 +42,16 @@ sealed interface Resource<out T> {
 @Serializable data class UserDto(
     val id: String, val name: String, val handle: String,
     @SerialName("follower_count") val followerCount: Int = 0,
+    val location: String? = null,
     @SerialName("profile_picture") val profilePicture: ArtworkDto? = null,
 )
 @Serializable data class TrackDto(
     val id: String, val title: String, val duration: Int = 0,
     val genre: String? = null, val artwork: ArtworkDto? = null, val user: UserDto,
     @SerialName("is_streamable") val isStreamable: Boolean = true,
+    @SerialName("play_count") val playCount: Int = 0,
+    val tags: String? = null,
+    val description: String? = null,
 )
 @Serializable data class PlaylistDto(
     val id: String,
@@ -52,3 +59,5 @@ sealed interface Resource<out T> {
     val artwork: ArtworkDto? = null,
     @SerialName("track_count") val trackCount: Int = 0,
 )
+
+fun audiusStreamUrl(id: String) = "${AUDIUS_BASE}tracks/$id/stream"

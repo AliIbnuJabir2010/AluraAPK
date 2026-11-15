@@ -49,6 +49,12 @@ object Icons {
     val PAUSE = IcoSpec("M7 5h3.5v14H7zM13.5 5H17v14h-3.5z", fill = true)
     val NEXT = IcoSpec("M6 5l9 7-9 7zM17 5h2.5v14H17z", fill = true)
     val PREV = IcoSpec("M18 5l-9 7 9 7zM4.5 5H7v14H4.5z", fill = true)
+    private const val HEART_PATH = "M12 20.5C12 20.5 3.5 15.5 3.5 9.5A4.5 4.5 0 0 1 12 7.5A4.5 4.5 0 0 1 20.5 9.5C20.5 15.5 12 20.5 12 20.5Z"
+    val HEART = IcoSpec(HEART_PATH)
+    val HEART_FILL = IcoSpec(HEART_PATH, fill = true)
+    val DOWNLOAD = IcoSpec("M12 4v11M7 11l5 5 5-5M5 20h14")
+    val PLUS = IcoSpec("M12 5v14M5 12h14")
+    val CHECK = IcoSpec("M5 12.5l4.5 4.5L19 7.5")
 }
 
 @Composable

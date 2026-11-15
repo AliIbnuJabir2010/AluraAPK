@@ -4,6 +4,7 @@ package com.alura
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -59,6 +60,9 @@ fun AluraApp(vm: AppViewModel = viewModel()) {
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var about by rememberSaveable { mutableStateOf(false) }
+    var page by rememberSaveable { mutableIntStateOf(-1) }
+    var lastPage by remember { mutableIntStateOf(0) }
+    if (page >= 0) lastPage = page
     var full by rememberSaveable { mutableStateOf(false) }
     var navVisible by remember { mutableStateOf(true) }
 
@@ -79,31 +83,14 @@ fun AluraApp(vm: AppViewModel = viewModel()) {
         }
     }
 
-    val perms = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { r ->
-        val audio = if (Build.VERSION.SDK_INT >= 33) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
+    val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-        if (r[audio] == true) {
-            vm.loadLocal()
-        }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33) perms.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     LaunchedEffect(Unit) {
-        val list = mutableListOf<String>()
-
-        if (Build.VERSION.SDK_INT >= 33) {
-            list += Manifest.permission.READ_MEDIA_AUDIO
-            list += Manifest.permission.POST_NOTIFICATIONS
-        } else {
-            list += Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-
-        perms.launch(list.toTypedArray())
+        vm.toasts.collect { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
     }
 
     BackHandler(full) {
@@ -114,7 +101,11 @@ fun AluraApp(vm: AppViewModel = viewModel()) {
         about = false
     }
 
-    val showNav = navVisible && !about
+    BackHandler(page >= 0 && !full) {
+        page = -1
+    }
+
+    val showNav = navVisible && !about && page < 0
     val navOff by animateDpAsState(
         if (showNav) 0.dp else 120.dp,
         label = "navOff"
@@ -140,9 +131,9 @@ fun AluraApp(vm: AppViewModel = viewModel()) {
                 .nestedScroll(conn)
         ) {
             when (tab) {
-                0 -> HomeScreen(vm, ps)
+                0 -> HomeScreen(vm, ps, onOpen = { page = it.ordinal })
                 1 -> SearchScreen(vm, ps)
-                else -> ProfileScreen(onAbout = { about = true })
+                else -> ProfileScreen(vm, onOpen = { page = it.ordinal }, onAbout = { about = true })
             }
 
             AnimatedVisibility(
@@ -151,6 +142,14 @@ fun AluraApp(vm: AppViewModel = viewModel()) {
                 exit = slideOutHorizontally { it }
             ) {
                 AboutScreen(onBack = { about = false })
+            }
+
+            AnimatedVisibility(
+                page >= 0,
+                enter = slideInHorizontally { it },
+                exit = slideOutHorizontally { it }
+            ) {
+                LibraryScreen(vm, ps, LibPage.values()[lastPage], onBack = { page = -1 })
             }
 
             GlassNav(
@@ -186,6 +185,7 @@ fun AluraApp(vm: AppViewModel = viewModel()) {
                 exit = slideOutVertically { it }
             ) {
                 PlayerScreen(
+                    vm,
                     ps,
                     p,
                     onBack = { full = false }

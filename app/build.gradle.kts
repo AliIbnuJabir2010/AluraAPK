@@ -23,7 +23,12 @@ android {
         buildConfigField("String", "AUDIUS_API_KEY", "\"${props.getProperty("AUDIUS_API_KEY", "")}\"")
     }
     buildFeatures { compose = true; buildConfig = true }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true   // dibutuhkan NewPipeExtractor (minSdk < 33)
+    }
+    packaging { resources { excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/INDEX.LIST") } }
     kotlinOptions { jvmTarget = "17" }
 }
 
@@ -45,4 +50,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
+    // YouTube Music (tidak resmi): pencarian + alamat audio
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.4")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
 }

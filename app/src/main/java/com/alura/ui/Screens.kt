@@ -28,68 +28,100 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.alura.R
+import com.alura.data.MusicSource
+import com.alura.data.Playlist
 import com.alura.data.Resource
 import com.alura.data.Track
 import com.alura.player.PS
 
-private val BOTTOM = 190.dp
+internal val BOTTOM = 190.dp
 
 @Composable
-fun HomeScreen(vm: AppViewModel, ps: PS) {
+private fun QuickTile(title: String, p: Playlist?, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier.height(56.dp).clip(RoundedCornerShape(8.dp)).background(Card2).clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(56.dp).background(
+                Brush.linearGradient(
+                    if (p == null) listOf(Color(0xFF5B3FE0), Color(0xFF8FE3D0)) else listOf(Color(0xFF1D3B6E), Color(0xFF0B1222))
+                )
+            ),
+            Alignment.Center
+        ) {
+            if (p == null) Ico(Icons.HEART_FILL, Color.White, 24.dp)
+            else p.artworkUrl?.let { AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        }
+        Text(
+            title, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(horizontal = 10.dp)
+        )
+    }
+}
+
+@Composable
+fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
     val tr by vm.trending.collectAsStateWithLifecycle()
     val pls by vm.playlists.collectAsStateWithLifecycle()
-    val loc by vm.local.collectAsStateWithLifecycle()
+    val lib by vm.lib.collectAsStateWithLifecycle()
     val trList = (tr as? Resource.Success)?.data.orEmpty()
-    val all = loc + trList
+    val plList = (pls as? Resource.Success)?.data.orEmpty().take(5)
+    val recent = lib.recent.take(3)
     val cur = ps.track?.id
+    val tiles = buildList<Pair<String, Playlist?>> {
+        add("Lagu yang Disukai" to null)
+        plList.forEach { add(it.name to it) }
+    }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(18.dp, 18.dp, 18.dp, BOTTOM)) {
         item {
-            Text("Halo,", color = Mut, fontSize = 12.sp)
-            Text("Pendengar", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        }
-        item {
-            Row(
-                Modifier.padding(top = 14.dp).fillMaxWidth().height(110.dp).clip(RoundedCornerShape(16.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF1C2B4D), Color(0xFF0D1424)))).padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Nikmati musik favoritmu di Alura", fontWeight = FontWeight.Bold)
-                    Text("Play. Feel. Repeat.", color = Mut, fontSize = 12.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                tiles.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { (name, p) ->
+                            QuickTile(name, p, Modifier.weight(1f)) {
+                                if (p == null) onOpen(LibPage.FAVORITES) else vm.playPlaylist(p)
+                            }
+                        }
+                        if (row.size < 2) Spacer(Modifier.weight(1f))
+                    }
                 }
-                Box(Modifier.size(40.dp).clip(CircleShape).background(Acc).clickable { if (all.isNotEmpty()) vm.play(all, 0) },
-                    Alignment.Center) { Ico(Icons.PLAY, Color.White, 18.dp) }
             }
         }
-        item { SectionTitle("Playlist Pilihan") }
+        if (recent.isNotEmpty()) {
+            item { SectionTitle("Sering kamu putar baru-baru ini") }
+            itemsIndexed(recent, key = { _, t -> "r${t.id}" }) { i, t ->
+                TrackRow(t, t.id == cur, vm) { vm.play(recent, i) }
+            }
+        }
+        item { SectionTitle("Lagu Indonesia") }
         item {
-            when (val r = pls) {
-                is Resource.Success -> LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(r.data, key = { it.id }) { p ->
-                        Box(
-                            Modifier.size(96.dp).clip(RoundedCornerShape(12.dp))
-                                .background(Brush.linearGradient(listOf(Color(0xFF1D3B6E), Color(0xFF0B1222))))
-                                .clickable { vm.playPlaylist(p) }
-                        ) {
-                            p.artworkUrl?.let { AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.7f)))))
-                            Text(p.name, fontSize = 11.sp, maxLines = 1, modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
+            when {
+                trList.isNotEmpty() -> LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(trList.take(10), key = { _, t -> t.id }) { i, t ->
+                        Column(Modifier.width(140.dp).clickable { vm.play(trList, i) }) {
+                            Art(t, 140.dp, 8.dp)
+                            Text(t.title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+                            Text(t.artist, fontSize = 11.sp, color = Mut, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
-                Resource.Loading -> CircularProgressIndicator(color = Acc, modifier = Modifier.size(24.dp))
-                else -> Text("Playlist tidak tersedia", color = Mut, fontSize = 13.sp)
+                tr is Resource.Loading -> CircularProgressIndicator(color = Acc, modifier = Modifier.size(24.dp))
+                tr is Resource.Error -> Column {
+                    Text((tr as Resource.Error).message, color = Mut, fontSize = 13.sp)
+                    TextButton(onClick = { vm.refresh() }) { Text("Coba lagi", color = Acc) }
+                }
+                else -> Text("Belum ada lagu.", color = Mut, fontSize = 13.sp)
             }
         }
-        item { SectionTitle("Lagu Terbaru") }
-        itemsIndexed(loc, key = { _, t -> t.id }) { i, t -> TrackRow(t, t.id == cur) { vm.play(all, i) } }
-        trackSection(tr, all, loc.size, cur, "Belum ada lagu.", { vm.refresh() }) { q, i -> vm.play(q, i) }
     }
 }
 
@@ -141,13 +173,14 @@ fun SearchScreen(vm: AppViewModel, ps: PS) {
                 if (shown is Resource.Success) Text("${shown.data.size} lagu", color = Mut, fontSize = 11.sp)
             }
         }
-        trackSection(shown, queue, 0, ps.track?.id,
+        trackSection(vm, shown, queue, 0, ps.track?.id,
             "Tidak ada hasil. Tidak semua lagu populer tersedia di Audius.", { vm.setQuery(q) }) { qq, i -> vm.play(qq, i) }
     }
 }
 
 @Composable
-fun ProfileScreen(onAbout: () -> Unit) {
+fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit) {
+    val lib by vm.lib.collectAsStateWithLifecycle()
     Column(
         Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())
             .padding(18.dp, 18.dp, 18.dp, BOTTOM),
@@ -162,9 +195,9 @@ fun ProfileScreen(onAbout: () -> Unit) {
         Text("@alibnujabir", color = Mut, fontSize = 12.sp)
         Spacer(Modifier.height(20.dp))
         Column(Modifier.fillMaxWidth()) {
-            MenuRow("Playlist Saya", "12 Playlist")
-            MenuRow("Favorit", "42 Lagu")
-            MenuRow("Download", "8 Lagu (offline)")
+            MenuRow("Playlist Saya", "${lib.playlists.size} Playlist") { onOpen(LibPage.PLAYLISTS) }
+            MenuRow("Favorit", "${lib.favorites.size} Lagu") { onOpen(LibPage.FAVORITES) }
+            MenuRow("Download", "${lib.downloads.size} Lagu (offline)") { onOpen(LibPage.DOWNLOADS) }
             MenuRow("Tentang Alura", "Versi, developer, dan dukungan", onAbout)
         }
     }
@@ -199,14 +232,17 @@ fun AboutScreen(onBack: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             InfoRow("Versi Aplikasi", "v1.0.0")
-            InfoRow("Sumber Musik", "Audius \u00B7 Lokal")
+            InfoRow("Sumber Musik", "Audius")
             InfoRow("Developed by", "Ali Ibnu Jabir")
         }
     }
 }
 
 @Composable
-fun PlayerScreen(ps: PS, p: Player, onBack: () -> Unit) {
+fun PlayerScreen(vm: AppViewModel, ps: PS, p: Player, onBack: () -> Unit) {
+    val lib by vm.lib.collectAsStateWithLifecycle()
+    val dl by vm.downloading.collectAsStateWithLifecycle()
+    var pick by remember { mutableStateOf(false) }
     var lyr by remember { mutableStateOf(false) }
     var drag by remember { mutableStateOf<Float?>(null) }
     fun fmt(ms: Long): String { val s = (ms / 1000).toInt(); return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
@@ -219,8 +255,28 @@ fun PlayerScreen(ps: PS, p: Player, onBack: () -> Unit) {
         Spacer(Modifier.height(18.dp))
         Art(ps.track, null, 22.dp, Modifier.align(Alignment.CenterHorizontally).fillMaxWidth(.85f).aspectRatio(1f))
         Spacer(Modifier.height(18.dp))
-        Text(ps.track?.title.orEmpty(), fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(ps.track?.artist.orEmpty(), color = Mut, fontSize = 13.sp, maxLines = 1)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(ps.track?.title.orEmpty(), fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(ps.track?.artist.orEmpty(), color = Mut, fontSize = 13.sp, maxLines = 1)
+            }
+            ps.track?.let { t ->
+                val fav = lib.isFav(t.id)
+                val saved = lib.isDownloaded(t.id)
+                val pct = dl[t.id]
+                Box(Modifier.size(42.dp).clip(CircleShape).clickable { vm.toggleFavorite(t) }, Alignment.Center) {
+                    Ico(if (fav) Icons.HEART_FILL else Icons.HEART, if (fav) Acc else Mut, 24.dp)
+                }
+                Box(Modifier.size(42.dp).clip(CircleShape).clickable { pick = true }, Alignment.Center) {
+                    Ico(Icons.PLUS, Mut, 24.dp)
+                }
+                if (t.source != MusicSource.YOUTUBE) Box(Modifier.size(42.dp).clip(CircleShape).clickable { vm.download(t) }, Alignment.Center) {
+                    if (pct != null) Text(if (pct >= 0) "$pct%" else "\u2026", color = Acc, fontSize = 12.sp)
+                    else Ico(Icons.DOWNLOAD, if (saved) Acc else Mut, 24.dp)
+                }
+            }
+        }
+        ps.track?.let { if (pick) AddToPlaylistDialog(vm, it) { pick = false } }
         if (lyr) Text("Lirik tidak tersedia untuk lagu ini.", color = Mut, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
         Spacer(Modifier.weight(1f))
         Slider(
