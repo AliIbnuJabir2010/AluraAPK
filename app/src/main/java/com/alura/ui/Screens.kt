@@ -57,13 +57,27 @@ private fun QuickTile(title: String, p: Playlist?, modifier: Modifier, onClick: 
             ),
             Alignment.Center
         ) {
-            if (p == null) Ico(Icons.HEART_FILL, Color.White, 24.dp)
-            else p.artworkUrl?.let { AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            if (title == "Lagu yang Disukai") Ico(Icons.HEART_FILL, Color.White, 24.dp)
+            else if (p?.artworkUrl != null) AsyncImage(p.artworkUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else Ico(Icons.PLAY, Color.White, 24.dp)
         }
         Text(
             title, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(horizontal = 10.dp)
         )
+    }
+}
+
+@Composable
+private fun AutomaticTile(title: String, subtitle: String, symbol: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.clip(RoundedCornerShape(12.dp)).background(CardC)
+            .border(1.dp, Line, RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Text(symbol, fontSize = 22.sp)
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, fontSize = 10.sp, color = Mut, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -74,7 +88,9 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
     val trList = (tr as? Resource.Success)?.data.orEmpty()
     val plList = (pls as? Resource.Success)?.data.orEmpty().take(5)
-    val recent = lib.recent.take(3)
+    val recent = vm.recentlyPlayed.take(3).ifEmpty { lib.recent.take(3) }
+    val popular = vm.mostPlayed.take(3)
+    val mix = vm.yourMix
     val cur = ps.track?.id
     val tiles = buildList<Pair<String, Playlist?>> {
         add("Lagu yang Disukai" to null)
@@ -85,9 +101,9 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tiles.chunked(2).forEach { row ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { (name, p) ->
-                            QuickTile(name, p, Modifier.weight(1f)) {
-                                if (p == null) onOpen(LibPage.FAVORITES) else vm.playPlaylist(p)
+                        row.forEach { (name, playlist) ->
+                            QuickTile(name, playlist, Modifier.weight(1f)) {
+                                if (playlist == null) onOpen(LibPage.FAVORITES) else vm.playPlaylist(playlist)
                             }
                         }
                         if (row.size < 2) Spacer(Modifier.weight(1f))
@@ -95,9 +111,23 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
                 }
             }
         }
+        item { SectionTitle("Playlist Otomatis") }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AutomaticTile("Sering Diputar", "${vm.mostPlayed.size} lagu", "🔥", Modifier.weight(1f)) { onOpen(LibPage.MOST_PLAYED) }
+                AutomaticTile("Baru Didengarkan", "${vm.recentlyPlayed.size} lagu", "🕘", Modifier.weight(1f)) { onOpen(LibPage.RECENTLY_PLAYED) }
+                AutomaticTile("Mix Kamu", "${mix.size} lagu", "✨", Modifier.weight(1f)) { onOpen(LibPage.YOUR_MIX) }
+            }
+        }
+        if (popular.isNotEmpty()) {
+            item { SectionTitle("Lagi sering kamu putar") }
+            itemsIndexed(popular, key = { _, t -> "popular_${t.id}" }) { i, t ->
+                TrackRow(t, t.id == cur, vm) { vm.play(popular, i) }
+            }
+        }
         if (recent.isNotEmpty()) {
-            item { SectionTitle("Sering kamu putar baru-baru ini") }
-            itemsIndexed(recent, key = { _, t -> "r${t.id}" }) { i, t ->
+            item { SectionTitle("Baru Didengarkan") }
+            itemsIndexed(recent, key = { _, t -> "recent_${t.id}" }) { i, t ->
                 TrackRow(t, t.id == cur, vm) { vm.play(recent, i) }
             }
         }
@@ -179,7 +209,7 @@ fun SearchScreen(vm: AppViewModel, ps: PS) {
 }
 
 @Composable
-fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit) {
+fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit, onSettings: () -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
     Column(
         Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())
@@ -199,7 +229,68 @@ fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Un
             MenuRow("Favorit", "${lib.favorites.size} Lagu") { onOpen(LibPage.FAVORITES) }
             MenuRow("Download", "${lib.downloads.size} Lagu (offline)") { onOpen(LibPage.DOWNLOADS) }
             MenuRow("Tentang Alura", "Versi, developer, dan dukungan", onAbout)
+            MenuRow("Pengaturan", "Tampilan dan preferensi aplikasi", onSettings)
         }
+    }
+}
+
+
+@Composable
+fun SettingsScreen(currentStyle: AluraStyle, onStyleChange: (AluraStyle) -> Unit, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(14.dp, 16.dp, 14.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clickable(onClick = onBack), Alignment.Center) { Ico(Icons.BACK, Txt) }
+            Text("Pengaturan", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            Spacer(Modifier.size(40.dp))
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp, 8.dp, 18.dp, 120.dp)) {
+            Text("TAMPILAN", color = Mut, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Pilih gaya Alura", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
+            StyleChoice(
+                title = "Liquid Glass", subtitle = "Nuansa kaca transparan, biru, dan modern",
+                selected = currentStyle == AluraStyle.LIQUID_GLASS,
+                preview = Color(0xFF14243D), accent = Color(0xFF4F8DFF)
+            ) { onStyleChange(AluraStyle.LIQUID_GLASS) }
+            Spacer(Modifier.height(10.dp))
+            StyleChoice(
+                title = "Paper", subtitle = "Terang seperti kertas, bersih, dan nyaman dibaca",
+                selected = currentStyle == AluraStyle.PAPER,
+                preview = Color(0xFFF5F1E8), accent = Color(0xFF315E9B)
+            ) { onStyleChange(AluraStyle.PAPER) }
+            Spacer(Modifier.height(22.dp))
+            Text("TENTANG TAMPILAN", color = Mut, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Pilihan tema disimpan otomatis dan tetap digunakan saat Alura dibuka kembali.", color = Mut, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Spacer(Modifier.height(18.dp))
+            InfoRow("Tema aktif", if (currentStyle == AluraStyle.LIQUID_GLASS) "Liquid Glass" else "Paper")
+        }
+    }
+}
+
+@Composable
+private fun StyleChoice(
+    title: String, subtitle: String, selected: Boolean,
+    preview: Color, accent: Color, onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+            .background(CardC).border(1.dp, if (selected) Acc else Line, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(76.dp, 62.dp).clip(RoundedCornerShape(12.dp)).background(preview).padding(8.dp)) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Box(Modifier.fillMaxWidth(.62f).height(7.dp).clip(CircleShape).background(accent))
+                Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(.12f)))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    repeat(3) { Box(Modifier.weight(1f).height(7.dp).clip(CircleShape).background(Color.White.copy(.2f))) }
+                }
+            }
+        }
+        Column(Modifier.weight(1f).padding(start = 13.dp)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, fontSize = 11.sp, color = Mut, modifier = Modifier.padding(top = 3.dp))
+        }
+        RadioButton(selected = selected, onClick = onClick, colors = RadioButtonDefaults.colors(selectedColor = Acc, unselectedColor = Mut))
     }
 }
 

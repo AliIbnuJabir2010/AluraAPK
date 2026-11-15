@@ -14,11 +14,21 @@ import java.util.UUID
 data class UserPlaylist(val id: String, val name: String, val tracks: List<Track> = emptyList())
 
 @Serializable
+data class TrackStats(
+    val track: Track,
+    val playCount: Int = 0,
+    val totalListenMs: Long = 0L,
+    val skipCount: Int = 0,
+    val lastPlayedAt: Long = 0L,
+)
+
+@Serializable
 data class LibraryData(
     val favorites: List<Track> = emptyList(),
     val playlists: List<UserPlaylist> = emptyList(),
     val downloads: List<Track> = emptyList(),
     val recent: List<Track> = emptyList(),
+    val stats: List<TrackStats> = emptyList(),
 ) {
     fun isFav(id: String) = favorites.any { it.id == id }
     fun isDownloaded(id: String) = downloads.any { it.id == id }
@@ -96,7 +106,48 @@ class LibraryStore(context: Context) {
     }
 
     fun addRecent(t: Track) = edit { d ->
-        d.copy(recent = (listOf(t.clean()) + d.recent.filterNot { it.id == t.id }).take(20))
+        val clean = t.clean()
+        val old = d.stats.firstOrNull { it.track.id == t.id }
+        val stat = (old ?: TrackStats(clean)).copy(track = clean, lastPlayedAt = System.currentTimeMillis())
+        d.copy(
+            recent = (listOf(clean) + d.recent.filterNot { it.id == t.id }).take(30),
+            stats = listOf(stat) + d.stats.filterNot { it.track.id == t.id },
+        )
+    }
+
+    /** Akumulasi waktu dengar aktual. Dipanggil berkala hanya ketika player berjalan. */
+    fun addListenTime(t: Track, deltaMs: Long) {
+        if (deltaMs <= 0L) return
+        edit { d ->
+            val old = d.stats.firstOrNull { it.track.id == t.id }
+            val next = (old ?: TrackStats(t.clean())).copy(
+                track = t.clean(),
+                totalListenMs = (old?.totalListenMs ?: 0L) + deltaMs,
+                lastPlayedAt = System.currentTimeMillis(),
+            )
+            d.copy(stats = listOf(next) + d.stats.filterNot { it.track.id == t.id })
+        }
+    }
+
+    /** Satu play baru dihitung setelah sesi mendengar mencapai ambang 30 detik. */
+    fun recordQualifiedPlay(t: Track) = edit { d ->
+        val old = d.stats.firstOrNull { it.track.id == t.id }
+        val next = (old ?: TrackStats(t.clean())).copy(
+            track = t.clean(),
+            playCount = (old?.playCount ?: 0) + 1,
+            lastPlayedAt = System.currentTimeMillis(),
+        )
+        d.copy(stats = listOf(next) + d.stats.filterNot { it.track.id == t.id })
+    }
+
+    fun recordSkip(t: Track) = edit { d ->
+        val old = d.stats.firstOrNull { it.track.id == t.id }
+        val next = (old ?: TrackStats(t.clean())).copy(
+            track = t.clean(),
+            skipCount = (old?.skipCount ?: 0) + 1,
+            lastPlayedAt = old?.lastPlayedAt ?: System.currentTimeMillis(),
+        )
+        d.copy(stats = listOf(next) + d.stats.filterNot { it.track.id == t.id })
     }
 
     fun addDownload(t: Track) = edit { d ->

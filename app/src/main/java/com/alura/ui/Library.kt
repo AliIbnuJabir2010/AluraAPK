@@ -23,7 +23,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alura.player.PS
 
 enum class LibPage(val title: String) {
-    PLAYLISTS("Playlist Saya"), FAVORITES("Favorit"), DOWNLOADS("Download")
+    PLAYLISTS("Playlist Manual"), FAVORITES("Favorit"), DOWNLOADS("Download"),
+    MOST_PLAYED("Sering Diputar"), RECENTLY_PLAYED("Baru Didengarkan"), YOUR_MIX("Mix Kamu")
 }
 
 @Composable
@@ -83,6 +84,25 @@ fun LibraryScreen(vm: AppViewModel, ps: PS, page: LibPage, onBack: () -> Unit) {
                             t, t.id == cur, vm,
                             extra = listOf("Hapus dari playlist" to { vm.removeFromPlaylist(open.id, t.id) })
                         ) { vm.play(open.tracks, i) }
+                    }
+                }
+                page == LibPage.MOST_PLAYED || page == LibPage.RECENTLY_PLAYED || page == LibPage.YOUR_MIX -> {
+                    val tracks = vm.automaticPlaylistTracks(page)
+                    if (tracks.isEmpty()) item {
+                        Text(
+                            if (page == LibPage.MOST_PLAYED) "Putar lagu minimal 30 detik agar Alura bisa mempelajari seleramu."
+                            else if (page == LibPage.RECENTLY_PLAYED) "Lagu yang kamu dengarkan akan muncul di sini."
+                            else "Dengarkan beberapa lagu dan tambahkan favorit untuk membangun Mix Kamu.",
+                            color = Mut, fontSize = 13.sp
+                        )
+                    } else item {
+                        Box(
+                            Modifier.padding(bottom = 6.dp).clip(CircleShape).background(Acc)
+                                .clickable { vm.play(tracks, 0) }.padding(horizontal = 20.dp, vertical = 10.dp)
+                        ) { Text("Putar semua", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                    }
+                    itemsIndexed(tracks, key = { _, t -> "${page.name}_${t.id}" }) { i, t ->
+                        TrackRow(t, t.id == cur, vm) { vm.play(tracks, i) }
                     }
                 }
                 page == LibPage.FAVORITES -> {

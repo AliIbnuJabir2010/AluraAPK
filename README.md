@@ -1,6 +1,6 @@
 # Alura (Android, Kotlin + Jetpack Compose)
 
-Pemutar musik yang semua audionya diambil dari **Audius API** (tidak membaca file audio perangkat). Ada Favorit, Playlist Saya, dan Download (salinan dari API untuk diputar offline).
+Pemutar musik yang semua audionya diambil dari **Audius API** (tidak membaca file audio perangkat). Ada Favorit, Playlist Manual, tiga Playlist Otomatis, statistik pemutaran lokal, dan Download (salinan audio Audius untuk diputar offline).
 
 ## Cara menjalankan
 1. Buka folder ini di **Android Studio** (Ladybug atau lebih baru, JDK 17). Biarkan Gradle sync (otomatis mengunduh Gradle 8.9).
@@ -9,14 +9,14 @@ Pemutar musik yang semua audionya diambil dari **Audius API** (tidak membaca fil
 3. Run di perangkat/emulator Android 8.0+ (minSdk 26).
 
 ## Struktur
-- `data/` : model, `AudiusApi` (Retrofit), `AudiusRepository` (cache, timeout, error, empty state), `LibraryStore` (favorit, playlist, download)
+- `data/` : model, `AudiusApi` (Retrofit), `AudiusRepository` (cache, timeout, error, empty state), `LibraryStore` (favorit, playlist manual, download, riwayat, statistik pemutaran)
 - `player/` : `PlayerHolder` (satu ExoPlayer) + `PlaybackService` (notifikasi/background)
-- `ui/` : tema, `GlassNav` (kapsul kaca + gelembung geser), layar Home/Search/Profil/About/Player
+- `ui/` : tema, `GlassNav` (kapsul kaca + gelembung geser), layar Home/Search/Profil/About/Player dan tiga playlist otomatis
 - `res/drawable-nodpi/ali_avatar.jpg, ali_banner.jpg` : foto developer
 
 ## Catatan
 - Nama genre kategori (mis. "Alternative", "Hip-Hop/Rap") dicocokkan dengan swagger Audius; ubah di `AppViewModel.kt` bila perlu.
-- Tidak semua lagu populer ada di Audius. Favorit/Playlist Saya/Download di Profil tersimpan di `files/library.json` dan `files/downloads/`.
+- Tidak semua lagu populer ada di Audius. Favorit/Playlist Manual/Download di Profil tersimpan di `files/library.json` dan `files/downloads/`.
 
 ## Build tanpa Android Studio (GitHub Actions)
 1. Buat repo baru di GitHub, upload seluruh isi folder ini (termasuk `.github/`).
@@ -31,3 +31,15 @@ Pemutar musik yang semua audionya diambil dari **Audius API** (tidak membaca fil
 - Sumber kedua, dipilih otomatis (tanpa tombol): cari di Audius dulu; kalau lagunya tidak ada pindah ke YouTube Music; kalau YouTube gagal/limit kembali ke Audius. Lagu YouTube yang gagal diputar juga diganti versi Audius bila ada. Lewat NewPipeExtractor (`data/YouTubeMusic.kt`). Bukan API resmi: melanggar ketentuan YouTube, bisa rusak kapan saja (naikkan versi `NewPipeExtractor` di `app/build.gradle.kts`), dan tidak cocok untuk Play Store.
 - Hanya putar (termasuk di latar belakang), tanpa Download. Favorit dan playlist tetap bisa dipakai.
 - Build butuh akses ke JitPack (sudah ditambahkan di `settings.gradle.kts`) dan core library desugaring.
+
+## Playlist otomatis dan statistik lokal
+- **Sering Diputar** mengurutkan lagu dari jumlah pemutaran, kebaruan, dan penalti skip. Satu pemutaran baru dihitung setelah minimal 30 detik audio benar-benar berjalan.
+- **Baru Didengarkan** diurutkan berdasarkan waktu terakhir diputar.
+- **Mix Kamu** menggabungkan kandidat lagu populer (40%), favorit (30%), baru didengarkan (20%), dan penemuan dari trending Audius (10%); duplikat dibuang dan slot yang kosong diisi dari kandidat lain.
+- Statistik disimpan di `files/library.json`. Tidak ada akun, server, atau sinkronisasi cloud.
+- Playlist manual tetap terpisah dan tidak diubah oleh algoritma.
+
+## Download dan offline
+- Alura tidak memindai atau mengambil musik dari folder musik HP.
+- Hanya lagu Audius yang pengguna pilih lewat tombol Download yang disalin ke `files/downloads/`.
+- Saat lagu sudah diunduh, player memilih file lokal; jika belum diunduh, player melakukan streaming. Lagu YouTube Music tidak mendukung download di aplikasi ini.

@@ -44,16 +44,16 @@ fun GlassNav(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifi
         val preview = dragX?.let { (it / tabW).roundToInt().coerceIn(0, 2) } ?: selected
         val x by animateFloatAsState(
             dragX ?: (selected * tabW),
-            if (big) tween(80, easing = LinearEasing) else spring(dampingRatio = 0.55f, stiffness = 300f),
+            if (big) tween(60, easing = LinearEasing) else spring(dampingRatio = 0.42f, stiffness = 260f),
             label = "bubbleX"
         )
-        val sx by animateFloatAsState(if (big) 1.3f else 1f, spring(0.5f, 400f), label = "sx")
-        val sy by animateFloatAsState(if (big) 1.38f else 1f, spring(0.5f, 400f), label = "sy")
+        val sx by animateFloatAsState(if (big) 1.3f else 1f, spring(dampingRatio = 0.42f, stiffness = 300f), label = "sx")
+        val sy by animateFloatAsState(if (big) 1.38f else 1f, spring(dampingRatio = 0.42f, stiffness = 300f), label = "sy")
 
         // Kapsul besar (kaca): gradasi transparan + tepi bercahaya + bayangan
         Box(
             Modifier.matchParentSize()
-                .shadow(18.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+                .shadow(5.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(CircleShape)
                 .background(Brush.linearGradient(listOf(W.copy(.16f), W.copy(.04f), W.copy(.09f))))
                 .border(1.dp, W.copy(.2f), CircleShape)
@@ -78,7 +78,7 @@ fun GlassNav(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifi
                 .offset { IntOffset((pad + x).roundToInt(), pad.roundToInt()) }
                 .size(with(d) { tabW.toDp() }, 54.dp)
                 .graphicsLayer { scaleX = sx; scaleY = sy }
-                .shadow(if (big) 14.dp else 4.dp, CircleShape, ambientColor = Acc, spotColor = Acc)
+                .shadow(if (big) 6.dp else 1.dp, CircleShape, ambientColor = Acc, spotColor = Acc)
                 .clip(CircleShape)
                 .background(
                     Brush.verticalGradient(

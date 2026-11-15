@@ -1,6 +1,10 @@
+# Local machine configuration and secrets
+local.properties
+
+# Gradle / Android build output
+.gradle/
+build/
+app/build/
 *.iml
-.gradle
-/local.properties
-/build
-/app/build
-.idea
+.idea/
+.DS_Store

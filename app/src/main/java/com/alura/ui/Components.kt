@@ -58,7 +58,18 @@ fun rememberPlayerState(p: Player): PS {
         p.addListener(l)
         onDispose { p.removeListener(l) }
     }
-    LaunchedEffect(p) { while (true) { delay(400); s = snap(p) } }
+    // Jangan polling posisi saat player berhenti. Polling lebih jarang juga
+    // mengurangi recomposition seluruh UI pada perangkat dengan RAM/CPU rendah.
+    LaunchedEffect(p) {
+        while (true) {
+            if (p.isPlaying) {
+                delay(1_000)
+                s = snap(p)
+            } else {
+                delay(1_000)
+            }
+        }
+    }
     return s
 }
 
