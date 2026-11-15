@@ -146,6 +146,8 @@ fun TrackRow(
         vm.downloading.map { it[t.id] }.distinctUntilChanged()
     }
     val pct by progressFlow.collectAsStateWithLifecycle<Int?>(null)
+    // Local snapshot of delegated state; Kotlin can smart-cast this value.
+    val progressPercent = pct
     var menu by remember { mutableStateOf(false) }
     var pick by remember { mutableStateOf(false) }
     val sourceLabel = when (t.source) {
@@ -155,7 +157,7 @@ fun TrackRow(
     }
     val sub = t.artist + " · " + sourceLabel + when {
         saved -> " · Offline"
-        pct != null -> if (pct >= 0) " \u00B7 Mengunduh $pct%" else " \u00B7 Mengunduh\u2026"
+        progressPercent != null -> if (progressPercent >= 0) " \u00B7 Mengunduh $progressPercent%" else " \u00B7 Mengunduh\u2026"
         else -> ""
     }
     Row(
