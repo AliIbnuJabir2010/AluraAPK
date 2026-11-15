@@ -23,13 +23,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alura.player.PS
 
 enum class LibPage(val title: String) {
-    PLAYLISTS("Playlist Manual"), FAVORITES("Favorit"), DOWNLOADS("Download"),
+    PLAYLISTS("Playlist Manual"), FAVORITES("Favorit"), DOWNLOADS("Download"), LOCAL("Musik di Perangkat"),
     MOST_PLAYED("Sering Diputar"), RECENTLY_PLAYED("Baru Didengarkan"), YOUR_MIX("Mix Kamu")
 }
 
 @Composable
 fun LibraryScreen(vm: AppViewModel, ps: PS, page: LibPage, onBack: () -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
+    val local by vm.local.collectAsStateWithLifecycle()
+    val localReady by vm.localReady.collectAsStateWithLifecycle()
+    val libraryReady by vm.libraryReady.collectAsStateWithLifecycle()
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     val open = if (page == LibPage.PLAYLISTS) lib.playlists.firstOrNull { it.id == openId } else null
@@ -62,6 +65,14 @@ fun LibraryScreen(vm: AppViewModel, ps: PS, page: LibPage, onBack: () -> Unit) {
 
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp, 8.dp, 18.dp, BOTTOM)) {
             when {
+                page != LibPage.LOCAL && !libraryReady -> item { TrackSkeletonList(count = 5) }
+                page == LibPage.LOCAL && !localReady -> item { TrackSkeletonList(count = 5) }
+                page == LibPage.LOCAL -> {
+                    if (local.isEmpty()) item { Text("Tidak ada file musik yang ditemukan di perangkat.", color = Mut, fontSize = 13.sp) }
+                    itemsIndexed(local, key = { _, t -> t.id }) { i, t ->
+                        TrackRow(t, t.id == cur, vm) { vm.play(local, i) }
+                    }
+                }
                 page == LibPage.PLAYLISTS && open == null -> {
                     if (lib.playlists.isEmpty()) item {
                         Text("Belum ada playlist. Ketuk + untuk membuat.", color = Mut, fontSize = 13.sp)

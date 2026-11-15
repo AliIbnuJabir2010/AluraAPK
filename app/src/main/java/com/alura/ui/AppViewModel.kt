@@ -33,21 +33,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val audius = AudiusRepository()
     private val yt = YouTubeRepository()
     private val store = LibraryStore(app)
+    private val localRepo = LocalRepository(app)
 
     val trending = MutableStateFlow<Resource<List<Track>>>(Resource.Loading)
     val playlists = MutableStateFlow<Resource<List<Playlist>>>(Resource.Loading)
     val results = MutableStateFlow<Resource<List<Track>>>(Resource.Empty)
     val query = MutableStateFlow("")
     val category = MutableStateFlow<Category?>(null)
+    val local = MutableStateFlow<List<Track>>(emptyList())
+    val localReady = MutableStateFlow(false)
 
     /** Favorit, Playlist Saya, dan Download. */
     val lib: StateFlow<LibraryData> = store.data
+    val libraryReady: StateFlow<Boolean> = store.ready
     /** id lagu -> persen download (0..100; -1 bila ukuran tidak diketahui). */
     val downloading = MutableStateFlow<Map<String, Int>>(emptyMap())
     /** Pesan singkat untuk Toast. */
     val toasts = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
     private var job: Job? = null
+    private var localJob: Job? = null
+    private var trendingJob: Job? = null
+    private var playlistJob: Job? = null
     private var statsJob: Job? = null
     private var sessionTrack: Track? = null
     private var sessionListenMs = 0L
@@ -93,8 +100,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun say(s: String) { toasts.tryEmit(s) }
 
     fun refresh() {
-        viewModelScope.launch { trending.value = Resource.Loading; trending.value = audius.indonesian() }
-        viewModelScope.launch { playlists.value = Resource.Loading; playlists.value = audius.indoPlaylists() }
+        if (trendingJob?.isActive != true) {
+            trendingJob = viewModelScope.launch {
+                if (trending.value !is Resource.Success) trending.value = Resource.Loading
+                trending.value = audius.indonesian()
+            }
+        }
+        if (playlistJob?.isActive != true) {
+            playlistJob = viewModelScope.launch {
+                if (playlists.value !is Resource.Success) playlists.value = Resource.Loading
+                playlists.value = audius.indoPlaylists()
+            }
+        }
+    }
+
+    /** Dipanggil setelah izin audio perangkat diberikan; query MediaStore berlangsung di IO. */
+    fun loadLocal() {
+        if (localJob?.isActive == true) return
+        localJob = viewModelScope.launch {
+            localReady.value = false
+            val result = localRepo.trending()
+            local.value = (result as? Resource.Success)?.data.orEmpty()
+            localReady.value = true
+        }
+    }
+
+    fun setLocalUnavailable() {
+        localReady.value = true
+        local.value = emptyList()
     }
 
     fun setQuery(q: String) { query.value = q; search(450) }
@@ -102,13 +135,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun search(delayMs: Long) {
         job?.cancel()
+        val q = query.value.trim()
+        val c = category.value
+        if (q.isEmpty() && c == null) {
+            results.value = Resource.Empty
+            return
+        }
+        // Ganti hasil lama dengan skeleton sebelum debounce, bukan setelah menunggu.
+        results.value = Resource.Loading
         job = viewModelScope.launch {
             delay(delayMs)
-            val q = query.value.trim()
-            val c = category.value
-            if (q.isEmpty() && c == null) { results.value = Resource.Empty; return@launch }
-            results.value = Resource.Loading
-            results.value = if (q.isNotEmpty()) searchAuto(q) else categoryAuto(c!!)
+            if (q.isNotEmpty()) {
+                val localHits = local.value.filter {
+                    it.title.contains(q, ignoreCase = true) || it.artist.contains(q, ignoreCase = true)
+                }
+                results.value = if (localHits.isEmpty()) Resource.Loading else Resource.Success(localHits)
+                val online = searchAuto(q)
+                val onlineTracks = (online as? Resource.Success)?.data.orEmpty()
+                val combined = (localHits + onlineTracks).distinctBy { it.id }
+                results.value = if (combined.isNotEmpty()) Resource.Success(combined) else online
+            } else {
+                results.value = Resource.Loading
+                results.value = categoryAuto(c!!)
+            }
         }
     }
 
@@ -117,12 +166,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * kalau YouTube gagal/limit/kosong kembali ke Audius.
      */
     private suspend fun searchAuto(q: String): Resource<List<Track>> {
-        val a = audius.searchSmart(q, strict = true)
-        if (a is Resource.Success) return a
-        val y = yt.search(q)
-        if (y is Resource.Success) return y
-        val a2 = audius.searchSmart(q)
-        return if (a2 is Resource.Success || y !is Resource.Error) a2 else y
+        val audiusResult = audius.searchSmart(q, strict = true)
+        if (audiusResult is Resource.Success) return audiusResult
+
+        // Jangan mengulang permintaan Audius yang sama setelah YouTube gagal.
+        // Pengulangan itu hanya menambah waktu tunggu dan beban jaringan.
+        val youtubeResult = yt.search(q)
+        return when {
+            youtubeResult is Resource.Success -> youtubeResult
+            audiusResult is Resource.Error -> audiusResult
+            else -> youtubeResult
+        }
     }
 
     private suspend fun categoryAuto(c: Category): Resource<List<Track>> {
@@ -280,7 +334,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Download (audio diambil dari API Audius, disimpan untuk diputar offline) ----
     fun download(track: Track) {
-        if (track.source == MusicSource.YOUTUBE) { say("Download tidak tersedia untuk lagu YouTube Music"); return }
+        if (track.source != MusicSource.AUDIUS) { say("Download hanya tersedia untuk lagu Audius"); return }
         val id = track.id
         if (lib.value.isDownloaded(id)) { say("Sudah ada di Download"); return }
         if (downloading.value.containsKey(id)) return
@@ -304,7 +358,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 out.write(buf, 0, n)
                                 done += n
                                 val pct = if (total > 0) (done * 100 / total).toInt() else -1
-                                if (pct != lastPct) { lastPct = pct; downloading.update { m -> m + (id to pct) } }
+                                if (pct >= 0 && (lastPct < 0 || pct >= lastPct + 5 || pct == 100)) {
+                                    lastPct = pct
+                                    downloading.update { m -> m + (id to pct) }
+                                } else if (pct < 0 && lastPct != -1) {
+                                    lastPct = -1
+                                    downloading.update { m -> m + (id to -1) }
+                                }
                             }
                         }
                     }

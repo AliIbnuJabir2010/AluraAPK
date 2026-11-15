@@ -4,9 +4,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class MusicSource { AUDIUS, YOUTUBE }
+enum class MusicSource { AUDIUS, YOUTUBE, LOCAL }
 
-/** Model domain tunggal. Semua audio berasal dari API Audius (stream online atau salinan hasil download). */
+/** Model domain tunggal untuk stream Audius, YouTube Music, dan file lokal perangkat. */
 @Serializable
 data class Track(
     val id: String,
@@ -14,7 +14,7 @@ data class Track(
     val artist: String,
     val artworkUrl: String?,
     val durationSec: Int,
-    val streamUri: String,          // URL stream Audius, atau ytm://<videoId> untuk YouTube Music
+    val streamUri: String,          // URL Audius, ytm://<videoId>, atau content:// untuk file lokal
     val genre: String? = null,
     val artistId: String = "",
     val source: MusicSource = MusicSource.AUDIUS,

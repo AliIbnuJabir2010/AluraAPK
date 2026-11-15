@@ -1,5 +1,6 @@
 package com.alura.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -7,20 +8,32 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import android.content.ContentUris
+import android.content.Context
+import android.provider.MediaStore
 import retrofit2.HttpException
 import java.io.IOException
+
+private suspend fun <T> attempt(block: suspend () -> T): Result<T> = try {
+    Result.success(block())
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    Result.failure(e)
+}
 
 private suspend fun <T> safe(block: suspend () -> List<T>): Resource<List<T>> = try {
     val r = withTimeout(20_000) { block() }
     if (r.isEmpty()) Resource.Empty else Resource.Success(r)
 } catch (e: TimeoutCancellationException) { Resource.Error(Resource.Kind.TIMEOUT, "Koneksi terlalu lama")
+} catch (e: CancellationException) { throw e
 } catch (e: IOException) { Resource.Error(Resource.Kind.NETWORK, "Tidak ada koneksi internet")
 } catch (e: HttpException) { Resource.Error(Resource.Kind.SERVER, "Server error (${e.code()})")
 } catch (e: Exception) { Resource.Error(Resource.Kind.UNKNOWN, e.message ?: "Terjadi kesalahan") }
 
 class AudiusRepository(private val api: AudiusApi = audiusApi) {
     private data class Cached(val at: Long, val tracks: List<Track>)
-    private val cache = HashMap<String, Cached>()
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Cached>()
     private val ttlMs = 5 * 60_000L
 
     private fun TrackDto.toDomain() = Track(
@@ -34,7 +47,7 @@ class AudiusRepository(private val api: AudiusApi = audiusApi) {
 
     /** Jalankan beberapa pencarian paralel. Gagal sebagian diabaikan; gagal semua dilempar. */
     private suspend fun gather(queries: List<String>, limit: Int, sort: String?): List<TrackDto> = coroutineScope {
-        val rs = queries.map { q -> async { runCatching { api.searchTracks(q, limit, sort).data } } }.awaitAll()
+        val rs = queries.map { q -> async { attempt { api.searchTracks(q, limit, sort).data } } }.awaitAll()
         val ok = rs.filter { it.isSuccess }
         if (ok.isEmpty()) throw (rs.first().exceptionOrNull() ?: IOException("Gagal memuat"))
         ok.flatMap { it.getOrThrow() }
@@ -99,8 +112,8 @@ class AudiusRepository(private val api: AudiusApi = audiusApi) {
     /** Playlist untuk Beranda: dicari dengan kata kunci Indonesia, cadangan trending global. */
     suspend fun indoPlaylists(): Resource<List<Playlist>> = safe {
         val rs = coroutineScope {
-            listOf("indonesia", "lagu indonesia", "indo")
-                .map { q -> async { runCatching { api.searchPlaylists(q, 12).data } } }.awaitAll()
+            listOf("indonesia", "lagu indonesia")
+                .map { q -> async { attempt { api.searchPlaylists(q, 12).data } } }.awaitAll()
         }
         val found = rs.flatMap { it.getOrNull().orEmpty() }.filter { it.trackCount > 0 }.distinctBy { it.id }
         (if (found.isNotEmpty()) found else api.trendingPlaylists().data)
@@ -122,7 +135,7 @@ class YouTubeRepository {
             val base = YouTubeMusic.search(q)
             val hits = base.filter { val t = it.title.norm(); t == nq || t.startsWith(nq) || " $nq " in " $t " }
             val anchor = hits.firstOrNull() ?: base.firstOrNull { it.artist.norm() == nq }
-            val more = if (anchor != null) {
+            val more = if (anchor != null && hits.size < 5) {
                 val a = anchor.artist.norm()
                 runCatching { YouTubeMusic.search(anchor.artist) }.getOrDefault(emptyList()).filter { it.artist.norm() == a }
             } else emptyList()
@@ -131,4 +144,49 @@ class YouTubeRepository {
     }
 
     suspend fun category(label: String, query: String?) = search(query ?: "$label indonesia")
+}
+
+
+/** Musik lokal perangkat; pemindaian MediaStore selalu berjalan di thread IO. */
+class LocalRepository(private val context: Context) {
+    private suspend fun all(): List<Track> = withContext(Dispatchers.IO) {
+        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val columns = arrayOf(
+            MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.DURATION
+        )
+        val tracks = ArrayList<Track>(128)
+        context.contentResolver.query(
+            uri, columns, "${MediaStore.Audio.Media.IS_MUSIC}=1", null,
+            "${MediaStore.Audio.Media.DATE_ADDED} DESC"
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+            val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+            val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idCol)
+                tracks += Track(
+                    id = "local:$id",
+                    title = cursor.getString(titleCol) ?: "Tanpa judul",
+                    artist = cursor.getString(artistCol) ?: "Unknown",
+                    artworkUrl = null,
+                    durationSec = (cursor.getLong(durationCol) / 1000L).toInt(),
+                    streamUri = ContentUris.withAppendedId(uri, id).toString(),
+                    source = MusicSource.LOCAL
+                )
+            }
+        }
+        tracks
+    }
+
+    suspend fun trending(genre: String? = null): Resource<List<Track>> =
+        safe { all().take(80) }
+
+    suspend fun searchTracks(query: String): Resource<List<Track>> = safe {
+        val q = query.trim()
+        if (q.isEmpty()) emptyList() else all().filter {
+            it.title.contains(q, ignoreCase = true) || it.artist.contains(q, ignoreCase = true)
+        }
+    }
 }

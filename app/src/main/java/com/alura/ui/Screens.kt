@@ -86,9 +86,11 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
     val tr by vm.trending.collectAsStateWithLifecycle()
     val pls by vm.playlists.collectAsStateWithLifecycle()
     val lib by vm.lib.collectAsStateWithLifecycle()
+    val local by vm.local.collectAsStateWithLifecycle()
+    val localReady by vm.localReady.collectAsStateWithLifecycle()
+    val libraryReady by vm.libraryReady.collectAsStateWithLifecycle()
     val trList = (tr as? Resource.Success)?.data.orEmpty()
     val plList = (pls as? Resource.Success)?.data.orEmpty().take(5)
-    // Hasil sorting/statistik tidak perlu dihitung ulang saat posisi lagu berubah.
     val recent = remember(lib) { vm.recentlyPlayed.take(3).ifEmpty { lib.recent.take(3) } }
     val popular = remember(lib) { vm.mostPlayed.take(3) }
     val mix = remember(lib, tr) { vm.yourMix }
@@ -100,6 +102,7 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
         }
     }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(18.dp, 18.dp, 18.dp, BOTTOM)) {
+        if (pls is Resource.Loading) item { PlaylistSkeletonRow() }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tiles.chunked(2).forEach { row ->
@@ -117,9 +120,18 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
         item { SectionTitle("Playlist Otomatis") }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AutomaticTile("Sering Diputar", "${vm.mostPlayed.size} lagu", "🔥", Modifier.weight(1f)) { onOpen(LibPage.MOST_PLAYED) }
-                AutomaticTile("Baru Didengarkan", "${vm.recentlyPlayed.size} lagu", "🕘", Modifier.weight(1f)) { onOpen(LibPage.RECENTLY_PLAYED) }
-                AutomaticTile("Mix Kamu", "${mix.size} lagu", "✨", Modifier.weight(1f)) { onOpen(LibPage.YOUR_MIX) }
+                AutomaticTile("Sering Diputar", if (libraryReady) "${popular.size} lagu" else "Memuat…", "TOP", Modifier.weight(1f)) { onOpen(LibPage.MOST_PLAYED) }
+                AutomaticTile("Baru Didengarkan", if (libraryReady) "${recent.size} lagu" else "Memuat…", "REC", Modifier.weight(1f)) { onOpen(LibPage.RECENTLY_PLAYED) }
+                AutomaticTile("Mix Kamu", if (libraryReady) "${mix.size} lagu" else "Memuat…", "MIX", Modifier.weight(1f)) { onOpen(LibPage.YOUR_MIX) }
+            }
+        }
+        if (!localReady) {
+            item { SectionTitle("Musik di Perangkat") }
+            item { TrackSkeletonList(count = 2) }
+        } else if (local.isNotEmpty()) {
+            item { SectionTitle("Musik di Perangkat") }
+            itemsIndexed(local.take(8), key = { _, t -> "local_${t.id}" }) { i, t ->
+                TrackRow(t, t.id == cur, vm) { vm.play(local, i) }
             }
         }
         if (popular.isNotEmpty()) {
@@ -147,7 +159,7 @@ fun HomeScreen(vm: AppViewModel, ps: PS, onOpen: (LibPage) -> Unit) {
                         }
                     }
                 }
-                tr is Resource.Loading -> CircularProgressIndicator(color = Acc, modifier = Modifier.size(24.dp))
+                tr is Resource.Loading -> TrackSkeletonList(count = 3)
                 tr is Resource.Error -> Column {
                     Text((tr as Resource.Error).message, color = Mut, fontSize = 13.sp)
                     TextButton(onClick = { vm.refresh() }) { Text("Coba lagi", color = Acc) }
@@ -212,8 +224,11 @@ fun SearchScreen(vm: AppViewModel, ps: PS) {
 }
 
 @Composable
-fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit) {
+fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Unit, onSettings: () -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
+    val local by vm.local.collectAsStateWithLifecycle()
+    val localReady by vm.localReady.collectAsStateWithLifecycle()
+    val ready by vm.libraryReady.collectAsStateWithLifecycle()
     Column(
         Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())
             .padding(18.dp, 18.dp, 18.dp, BOTTOM),
@@ -228,11 +243,78 @@ fun ProfileScreen(vm: AppViewModel, onOpen: (LibPage) -> Unit, onAbout: () -> Un
         Text("@alibnujabir", color = Mut, fontSize = 12.sp)
         Spacer(Modifier.height(20.dp))
         Column(Modifier.fillMaxWidth()) {
-            MenuRow("Playlist Saya", "${lib.playlists.size} Playlist") { onOpen(LibPage.PLAYLISTS) }
-            MenuRow("Favorit", "${lib.favorites.size} Lagu") { onOpen(LibPage.FAVORITES) }
-            MenuRow("Download", "${lib.downloads.size} Lagu (offline)") { onOpen(LibPage.DOWNLOADS) }
+            if (!ready) {
+                TrackSkeletonList(count = 3)
+            } else {
+                MenuRow("Playlist Saya", "${lib.playlists.size} Playlist") { onOpen(LibPage.PLAYLISTS) }
+                MenuRow("Favorit", "${lib.favorites.size} Lagu") { onOpen(LibPage.FAVORITES) }
+                MenuRow("Download", "${lib.downloads.size} Lagu (offline)") { onOpen(LibPage.DOWNLOADS) }
+            }
+            if (!localReady) TrackSkeletonList(count = 1)
+            else MenuRow("Musik di Perangkat", "${local.size} Lagu") { onOpen(LibPage.LOCAL) }
             MenuRow("Tentang Alura", "Versi, developer, dan dukungan", onAbout)
+            MenuRow("Pengaturan", "Tampilan dan preferensi aplikasi", onSettings)
         }
+    }
+}
+
+
+@Composable
+fun SettingsScreen(currentStyle: AluraStyle, onStyleChange: (AluraStyle) -> Unit, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(14.dp, 16.dp, 14.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clickable(onClick = onBack), Alignment.Center) { Ico(Icons.BACK, Txt) }
+            Text("Pengaturan", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            Spacer(Modifier.size(40.dp))
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp, 8.dp, 18.dp, 120.dp)) {
+            Text("TAMPILAN", color = Mut, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Pilih gaya Alura", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
+            StyleChoice(
+                title = "Liquid Glass", subtitle = "Nuansa kaca transparan, biru, dan modern",
+                selected = currentStyle == AluraStyle.LIQUID_GLASS,
+                preview = Color(0xFF14243D), accent = Color(0xFF4F8DFF)
+            ) { onStyleChange(AluraStyle.LIQUID_GLASS) }
+            Spacer(Modifier.height(10.dp))
+            StyleChoice(
+                title = "Paper", subtitle = "Terang seperti kertas, bersih, dan nyaman dibaca",
+                selected = currentStyle == AluraStyle.PAPER,
+                preview = Color(0xFFF5F1E8), accent = Color(0xFF315E9B)
+            ) { onStyleChange(AluraStyle.PAPER) }
+            Spacer(Modifier.height(22.dp))
+            Text("TENTANG TAMPILAN", color = Mut, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+            Text("Pilihan tema disimpan otomatis dan tetap digunakan saat Alura dibuka kembali.", color = Mut, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Spacer(Modifier.height(18.dp))
+            InfoRow("Tema aktif", if (currentStyle == AluraStyle.LIQUID_GLASS) "Liquid Glass" else "Paper")
+        }
+    }
+}
+
+@Composable
+private fun StyleChoice(
+    title: String, subtitle: String, selected: Boolean,
+    preview: Color, accent: Color, onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+            .background(CardC).border(1.dp, if (selected) Acc else Line, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(76.dp, 62.dp).clip(RoundedCornerShape(12.dp)).background(preview).padding(8.dp)) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Box(Modifier.fillMaxWidth(.62f).height(7.dp).clip(CircleShape).background(accent))
+                Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(.12f)))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    repeat(3) { Box(Modifier.weight(1f).height(7.dp).clip(CircleShape).background(Color.White.copy(.2f))) }
+                }
+            }
+        }
+        Column(Modifier.weight(1f).padding(start = 13.dp)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, fontSize = 11.sp, color = Mut, modifier = Modifier.padding(top = 3.dp))
+        }
+        RadioButton(selected = selected, onClick = onClick, colors = RadioButtonDefaults.colors(selectedColor = Acc, unselectedColor = Mut))
     }
 }
 
@@ -265,7 +347,7 @@ fun AboutScreen(onBack: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             InfoRow("Versi Aplikasi", "v1.0.0")
-            InfoRow("Sumber Musik", "Audius")
+            InfoRow("Sumber Musik", "Audius · YouTube Music · Lokal")
             InfoRow("Developed by", "Ali Ibnu Jabir")
         }
     }
@@ -275,6 +357,7 @@ fun AboutScreen(onBack: () -> Unit) {
 fun PlayerScreen(vm: AppViewModel, ps: PS, p: Player, onBack: () -> Unit) {
     val lib by vm.lib.collectAsStateWithLifecycle()
     val dl by vm.downloading.collectAsStateWithLifecycle()
+    val (position, duration) = rememberPlaybackProgress(p, ps.playing)
     var pick by remember { mutableStateOf(false) }
     var lyr by remember { mutableStateOf(false) }
     var drag by remember { mutableStateOf<Float?>(null) }
@@ -303,7 +386,7 @@ fun PlayerScreen(vm: AppViewModel, ps: PS, p: Player, onBack: () -> Unit) {
                 Box(Modifier.size(42.dp).clip(CircleShape).clickable { pick = true }, Alignment.Center) {
                     Ico(Icons.PLUS, Mut, 24.dp)
                 }
-                if (t.source != MusicSource.YOUTUBE) Box(Modifier.size(42.dp).clip(CircleShape).clickable { vm.download(t) }, Alignment.Center) {
+                if (t.source == MusicSource.AUDIUS) Box(Modifier.size(42.dp).clip(CircleShape).clickable { vm.download(t) }, Alignment.Center) {
                     if (pct != null) Text(if (pct >= 0) "$pct%" else "\u2026", color = Acc, fontSize = 12.sp)
                     else Ico(Icons.DOWNLOAD, if (saved) Acc else Mut, 24.dp)
                 }
@@ -313,14 +396,14 @@ fun PlayerScreen(vm: AppViewModel, ps: PS, p: Player, onBack: () -> Unit) {
         if (lyr) Text("Lirik tidak tersedia untuk lagu ini.", color = Mut, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
         Spacer(Modifier.weight(1f))
         Slider(
-            value = drag ?: if (ps.dur > 0) (ps.pos.toFloat() / ps.dur).coerceIn(0f, 1f) else 0f,
+            value = drag ?: if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
             onValueChange = { drag = it },
-            onValueChangeFinished = { drag?.let { p.seekTo((it * ps.dur).toLong()) }; drag = null },
+            onValueChangeFinished = { drag?.let { p.seekTo((it * duration).toLong()) }; drag = null },
             colors = SliderDefaults.colors(thumbColor = Acc, activeTrackColor = Acc, inactiveTrackColor = Line)
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(fmt(ps.pos), color = Mut, fontSize = 12.sp)
-            Text(fmt(ps.dur), color = Mut, fontSize = 12.sp)
+            Text(fmt(position), color = Mut, fontSize = 12.sp)
+            Text(fmt(duration), color = Mut, fontSize = 12.sp)
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 22.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(48.dp).clickable { p.seekToPreviousMediaItem() }, Alignment.Center) { Ico(Icons.PREV, Txt, 26.dp) }

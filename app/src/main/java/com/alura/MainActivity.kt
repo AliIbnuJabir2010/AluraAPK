@@ -1,7 +1,7 @@
-
 package com.alura
 
 import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -11,18 +11,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -49,165 +42,175 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val preferences = getSharedPreferences("alura_preferences", MODE_PRIVATE)
         setContent {
+            var styleName by rememberSaveable {
+                mutableStateOf(preferences.getString("appearance", "LIQUID_GLASS") ?: "LIQUID_GLASS")
+            }
+            val style = runCatching { AluraStyle.valueOf(styleName) }
+                .getOrDefault(AluraStyle.LIQUID_GLASS)
+            SideEffect { setAluraStyle(style) }
             AluraTheme {
-                AluraApp()
+                AluraApp(
+                    currentStyle = style,
+                    onStyleChange = { next ->
+                        styleName = next.name
+                        preferences.edit().putString("appearance", next.name).apply()
+                        setAluraStyle(next)
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun AluraApp(vm: AppViewModel = viewModel()) {
-    val ctx = LocalContext.current
-    val p = remember { PlayerHolder.player(ctx) }
-    val ps = rememberPlayerState(p)
+fun AluraApp(
+    vm: AppViewModel = viewModel(),
+    currentStyle: AluraStyle = AluraStyle.LIQUID_GLASS,
+    onStyleChange: (AluraStyle) -> Unit = {}
+) {
+    val context = LocalContext.current
+    val player = remember { PlayerHolder.player(context) }
+    // State ini hanya berubah saat event player, bukan setiap 400-1500 ms.
+    val playerState = rememberPlayerState(player)
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val screenStateHolder = rememberSaveableStateHolder()
+    val stateHolder = rememberSaveableStateHolder()
     var about by rememberSaveable { mutableStateOf(false) }
-    var page by rememberSaveable { mutableIntStateOf(-1) }
-    var lastPage by remember { mutableIntStateOf(0) }
-    if (page >= 0) lastPage = page
-    var full by rememberSaveable { mutableStateOf(false) }
+    var settings by rememberSaveable { mutableStateOf(false) }
+    var pageIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var fullPlayer by rememberSaveable { mutableStateOf(false) }
     var navVisible by remember { mutableStateOf(true) }
 
-    // Menu menutup saat scroll ke bawah, muncul lagi saat scroll ke atas
-    val conn = remember {
+    val audioPermission = remember {
+        if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+    val permissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result[audioPermission] == true) vm.loadLocal()
+        else vm.setLocalUnavailable()
+    }
+
+    LaunchedEffect(Unit) {
+        val hasAudio = context.checkSelfPermission(audioPermission) == PackageManager.PERMISSION_GRANTED
+        if (hasAudio) {
+            vm.loadLocal()
+        } else {
+            val requested = buildList {
+                add(audioPermission)
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            permissions.launch(requested.toTypedArray())
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm.toasts.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+    }
+
+    BackHandler(enabled = fullPlayer) { fullPlayer = false }
+    BackHandler(enabled = !fullPlayer && pageIndex >= 0) { pageIndex = -1 }
+    BackHandler(enabled = !fullPlayer && settings) { settings = false }
+    BackHandler(enabled = !fullPlayer && !settings && about) { about = false }
+
+    val mainVisible = !fullPlayer && pageIndex < 0 && !about && !settings
+    val showNav = mainVisible && navVisible
+    val navMotion = spring<androidx.compose.ui.unit.Dp>(
+        dampingRatio = 0.88f,
+        stiffness = Spring.StiffnessMediumLow
+    )
+    val navOffset by animateDpAsState(
+        targetValue = if (showNav) 0.dp else 120.dp,
+        animationSpec = navMotion,
+        label = "navOffset"
+    )
+    val navAlpha by animateFloatAsState(
+        targetValue = if (showNav) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium),
+        label = "navAlpha"
+    )
+    val miniBottom by animateDpAsState(
+        targetValue = if (showNav) 90.dp else 16.dp,
+        animationSpec = navMotion,
+        label = "miniBottom"
+    )
+
+    val nestedScroll = remember {
         object : NestedScrollConnection {
-            override fun onPreScroll(
-                available: Offset,
-                source: NestedScrollSource
-            ): Offset {
-                if (available.y < -8f) {
-                    navVisible = false
-                } else if (available.y > 8f) {
-                    navVisible = true
-                }
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < -8f) navVisible = false
+                else if (available.y > 8f) navVisible = true
                 return Offset.Zero
             }
         }
     }
 
-    val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= 33) perms.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
-
-    LaunchedEffect(Unit) {
-        vm.toasts.collect { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
-    }
-
-    BackHandler(full) {
-        full = false
-    }
-
-    BackHandler(about && !full) {
-        about = false
-    }
-
-    BackHandler(page >= 0 && !full) {
-        page = -1
-    }
-
-    val showNav = navVisible && !about && page < 0
-    val navMotion = spring< androidx.compose.ui.unit.Dp>(
-        dampingRatio = 0.72f,
-        stiffness = Spring.StiffnessMediumLow
-    )
-    val navOff by animateDpAsState(
-        if (showNav) 0.dp else 120.dp,
-        animationSpec = navMotion,
-        label = "navOff"
-    )
-    val navAlpha by animateFloatAsState(
-        if (showNav) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMedium),
-        label = "navAlpha"
-    )
-    val miniBottom by animateDpAsState(
-        if (showNav) 90.dp else 16.dp,
-        animationSpec = navMotion,
-        label = "miniBottom"
-    )
-
-    Surface(
-        Modifier.fillMaxSize(),
-        color = Bg,
-        contentColor = Txt
-    ) {
+    Surface(Modifier.fillMaxSize(), color = Bg, contentColor = Txt) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .background(Bg)
-                .nestedScroll(conn)
+            Modifier.fillMaxSize().background(Bg).nestedScroll(nestedScroll)
         ) {
-            // Ganti tab secara langsung. AnimatedContent sebelumnya menahan dua layar
-            // sekaligus selama transisi sehingga daftar, gambar, dan state lama tetap
-            // ikut dirender ketika layar baru mulai dibuka.
-            screenStateHolder.SaveableStateProvider(tab) {
-                when (tab) {
-                    0 -> HomeScreen(vm, ps, onOpen = { page = it.ordinal })
-                    1 -> SearchScreen(vm, ps)
-                    else -> ProfileScreen(vm, onOpen = { page = it.ordinal }, onAbout = { about = true })
+            // Hanya satu layar yang aktif pada satu waktu. Halaman di belakang tidak
+            // ikut dirender ulang ketika library, statistik, atau player berubah.
+            when {
+                fullPlayer && playerState.track != null -> {
+                    PlayerScreen(vm, playerState, player) { fullPlayer = false }
                 }
-            }
+                settings -> {
+                    SettingsScreen(currentStyle, onStyleChange) { settings = false }
+                }
+                about -> {
+                    AboutScreen { about = false }
+                }
+                pageIndex >= 0 -> {
+                    val page = LibPage.values().getOrNull(pageIndex) ?: LibPage.PLAYLISTS
+                    LibraryScreen(vm, playerState, page) { pageIndex = -1 }
+                }
+                else -> {
+                    stateHolder.SaveableStateProvider(tab) {
+                        when (tab) {
+                            0 -> HomeScreen(vm, playerState, onOpen = { pageIndex = it.ordinal })
+                            1 -> SearchScreen(vm, playerState)
+                            else -> ProfileScreen(
+                                vm = vm,
+                                onOpen = { pageIndex = it.ordinal },
+                                onAbout = { about = true },
+                                onSettings = { settings = true }
+                            )
+                        }
+                    }
 
-            AnimatedVisibility(
-                about,
-                enter = slideInHorizontally(animationSpec = spring(dampingRatio = 0.88f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeIn(),
-                exit = slideOutHorizontally(animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { it / 4 } + fadeOut()
-            ) {
-                AboutScreen(onBack = { about = false })
-            }
+                    GlassNav(
+                        selected = tab,
+                        onSelect = {
+                            if (tab != it) tab = it
+                            navVisible = true
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = 14.dp)
+                            .offset(y = navOffset)
+                            .alpha(navAlpha)
+                    )
 
-            AnimatedVisibility(
-                page >= 0,
-                enter = slideInHorizontally(animationSpec = spring(dampingRatio = 0.88f, stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeIn(),
-                exit = slideOutHorizontally(animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { it / 4 } + fadeOut()
-            ) {
-                LibraryScreen(vm, ps, LibPage.values()[lastPage], onBack = { page = -1 })
-            }
-
-            GlassNav(
-                selected = tab,
-                onSelect = {
-                    tab = it
-                    navVisible = true
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 14.dp)
-                    .offset(y = navOff)
-                    .alpha(navAlpha)
-            )
-
-            if (ps.track != null) {
-                MiniPlayer(
-                    ps,
-                    p,
-                    onOpen = { full = true },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(horizontal = 12.dp)
-                        .navigationBarsPadding()
-                        .padding(bottom = miniBottom)
-                )
-            }
-
-            AnimatedVisibility(
-                full,
-                enter = slideInVertically(animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)) { it },
-                exit = slideOutVertically(animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { it }
-            ) {
-                PlayerScreen(
-                    vm,
-                    ps,
-                    p,
-                    onBack = { full = false }
-                )
+                    if (playerState.track != null) {
+                        MiniPlayer(
+                            playerState,
+                            player,
+                            onOpen = { fullPlayer = true },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(horizontal = 12.dp)
+                                .navigationBarsPadding()
+                                .padding(bottom = miniBottom)
+                        )
+                    }
+                }
             }
         }
     }

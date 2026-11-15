@@ -19,7 +19,7 @@ val INDO_ARTISTS = listOf(
 )
 
 /** Kueri umum + beberapa artis, dipakai untuk mengisi Beranda dengan lagu Indonesia. */
-val INDO_QUERIES = listOf("lagu indonesia", "indonesia", "indo pop", "indie indonesia") + INDO_ARTISTS.take(8)
+val INDO_QUERIES = listOf("lagu indonesia", "indo pop", "indie indonesia", "Hindia", "Nadin Amizah")
 
 private val INDO_PLACES = setOf(
     "indonesia", "jakarta", "bandung", "surabaya", "yogyakarta", "jogja", "bali", "medan", "semarang",

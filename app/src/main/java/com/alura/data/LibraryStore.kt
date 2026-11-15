@@ -10,6 +10,8 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 @Serializable
 data class UserPlaylist(val id: String, val name: String, val tracks: List<Track> = emptyList())
@@ -36,54 +38,103 @@ data class LibraryData(
 }
 
 /**
- * Penyimpanan Favorit, Playlist Saya, dan daftar Download (metadata di library.json).
- * File audio hasil download diambil dari API Audius dan disimpan di filesDir/downloads/<id>.mp3.
+ * Metadata pustaka dibaca dan ditulis di satu worker IO khusus.
+ * Operasi ke StateFlow tetap instan agar sentuhan UI tidak menunggu file.
  */
 class LibraryStore(context: Context) {
-    private val dir = context.applicationContext.filesDir
+    private val appContext = context.applicationContext
+    private val dir = appContext.filesDir
     private val file = File(dir, "library.json")
-    private val downloadDir = File(dir, "downloads").apply { mkdirs() }
+    private val downloadDir = File(dir, "downloads")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    // Semua penulisan metadata dilakukan serial di background, bukan di main thread.
     private val ioExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "alura-library-io").apply { isDaemon = true }
     }
 
-    private val _data = MutableStateFlow(load())
+    private val _data = MutableStateFlow(LibraryData())
     val data: StateFlow<LibraryData> = _data.asStateFlow()
+    private val _ready = MutableStateFlow(false)
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
-    fun fileFor(id: String) = File(downloadDir, "$id.mp3")
-    fun partFor(id: String) = File(downloadDir, "$id.part")
+    private val stateLock = Any()
+    private var dataReady = false
+    private val pendingEdits = ArrayList<(LibraryData) -> LibraryData>()
+    private val revision = AtomicLong(0L)
+    private val persistScheduled = AtomicBoolean(false)
 
-    private fun load(): LibraryData {
-        val d = runCatching { json.decodeFromString(LibraryData.serializer(), file.readText()) }
-            .getOrDefault(LibraryData())
-        // Buang entri download yang file-nya sudah tidak ada
-        return d.copy(downloads = d.downloads.filter { fileFor(it.id).exists() })
+    init {
+        // Membaca dan mendekode JSON dilakukan setelah layar dapat mulai dirender.
+        ioExecutor.execute {
+            val loaded = loadFromDisk()
+            val hadPendingEdits: Boolean
+            synchronized(stateLock) {
+                var merged = loaded
+                hadPendingEdits = pendingEdits.isNotEmpty()
+                pendingEdits.forEach { edit -> merged = edit(merged) }
+                pendingEdits.clear()
+                dataReady = true
+                _data.value = merged
+                _ready.value = true
+            }
+            if (hadPendingEdits) schedulePersist()
+        }
     }
 
-    @Synchronized
-    private fun edit(f: (LibraryData) -> LibraryData) {
-        val n = f(_data.value)
-        _data.value = n // UI langsung menerima perubahan; I/O tidak menahan frame.
+    fun fileFor(id: String) = File(downloadDir, "$id.mp3")
+
+    fun partFor(id: String): File {
+        downloadDir.mkdirs()
+        return File(downloadDir, "$id.part")
+    }
+
+    private fun loadFromDisk(): LibraryData {
+        downloadDir.mkdirs()
+        val stored = runCatching {
+            if (file.exists()) json.decodeFromString(LibraryData.serializer(), file.readText())
+            else LibraryData()
+        }.getOrDefault(LibraryData())
+        return stored.copy(downloads = stored.downloads.filter { fileFor(it.id).exists() })
+    }
+
+    private fun edit(transform: (LibraryData) -> LibraryData) {
+        synchronized(stateLock) {
+            _data.value = transform(_data.value)
+            if (dataReady) schedulePersist() else pendingEdits += transform
+        }
+    }
+
+    /** Coalesce penulisan beruntun agar perubahan statistik tidak membuat antrean I/O panjang. */
+    private fun schedulePersist() {
+        revision.incrementAndGet()
+        if (!persistScheduled.compareAndSet(false, true)) return
         ioExecutor.execute {
-            runCatching {
-                val encoded = json.encodeToString(LibraryData.serializer(), n)
-                val tmp = File(dir, "library.json.tmp")
-                tmp.writeText(encoded)
-                if (!tmp.renameTo(file)) {
-                    file.writeText(encoded)
-                    tmp.delete()
+            while (true) {
+                val version = revision.get()
+                persist(_data.value)
+                if (revision.get() == version) {
+                    persistScheduled.set(false)
+                    if (revision.get() == version || !persistScheduled.compareAndSet(false, true)) break
                 }
             }
         }
     }
 
-    /** Selalu simpan URL Audius (bukan file://) supaya data tetap valid walau download dihapus. */
-    private fun Track.clean() =
+    private fun persist(snapshot: LibraryData) {
+        runCatching {
+            val encoded = json.encodeToString(LibraryData.serializer(), snapshot)
+            val tmp = File(dir, "library.json.tmp")
+            tmp.writeText(encoded)
+            if (!tmp.renameTo(file)) {
+                file.writeText(encoded)
+                tmp.delete()
+            }
+        }
+    }
+
+    /** Simpan URL stream asli, bukan URI file hasil download. */
+    private fun Track.clean(): Track =
         if (streamUri.startsWith("file:")) copy(streamUri = audiusStreamUrl(id)) else this
 
-    /** Kembalikan true bila lagu jadi favorit, false bila dihapus dari favorit. */
     fun toggleFavorite(t: Track): Boolean {
         var added = false
         edit { d ->
@@ -101,19 +152,23 @@ class LibraryStore(context: Context) {
 
     fun deletePlaylist(id: String) = edit { d -> d.copy(playlists = d.playlists.filterNot { it.id == id }) }
 
-    /** false bila lagu sudah ada di playlist itu. */
     fun addToPlaylist(pid: String, t: Track): Boolean {
         var added = false
         edit { d ->
             d.copy(playlists = d.playlists.map { p ->
-                if (p.id == pid && p.tracks.none { it.id == t.id }) { added = true; p.copy(tracks = p.tracks + t.clean()) } else p
+                if (p.id == pid && p.tracks.none { it.id == t.id }) {
+                    added = true
+                    p.copy(tracks = p.tracks + t.clean())
+                } else p
             })
         }
         return added
     }
 
     fun removeFromPlaylist(pid: String, tid: String) = edit { d ->
-        d.copy(playlists = d.playlists.map { p -> if (p.id == pid) p.copy(tracks = p.tracks.filterNot { it.id == tid }) else p })
+        d.copy(playlists = d.playlists.map { p ->
+            if (p.id == pid) p.copy(tracks = p.tracks.filterNot { it.id == tid }) else p
+        })
     }
 
     fun addRecent(t: Track) = edit { d ->
@@ -122,33 +177,33 @@ class LibraryStore(context: Context) {
         val stat = (old ?: TrackStats(clean)).copy(track = clean, lastPlayedAt = System.currentTimeMillis())
         d.copy(
             recent = (listOf(clean) + d.recent.filterNot { it.id == t.id }).take(30),
-            stats = listOf(stat) + d.stats.filterNot { it.track.id == t.id },
+            stats = (listOf(stat) + d.stats.filterNot { it.track.id == t.id }).take(500),
         )
     }
 
-    /** Akumulasi waktu dengar aktual. Dipanggil berkala hanya ketika player berjalan. */
     fun addListenTime(t: Track, deltaMs: Long) {
         if (deltaMs <= 0L) return
         edit { d ->
             val old = d.stats.firstOrNull { it.track.id == t.id }
-            val next = (old ?: TrackStats(t.clean())).copy(
-                track = t.clean(),
+            val clean = t.clean()
+            val next = (old ?: TrackStats(clean)).copy(
+                track = clean,
                 totalListenMs = (old?.totalListenMs ?: 0L) + deltaMs,
                 lastPlayedAt = System.currentTimeMillis(),
             )
-            d.copy(stats = listOf(next) + d.stats.filterNot { it.track.id == t.id })
+            d.copy(stats = (listOf(next) + d.stats.filterNot { it.track.id == t.id }).take(500))
         }
     }
 
-    /** Satu play baru dihitung setelah sesi mendengar mencapai ambang 30 detik. */
     fun recordQualifiedPlay(t: Track) = edit { d ->
         val old = d.stats.firstOrNull { it.track.id == t.id }
-        val next = (old ?: TrackStats(t.clean())).copy(
-            track = t.clean(),
+        val clean = t.clean()
+        val next = (old ?: TrackStats(clean)).copy(
+            track = clean,
             playCount = (old?.playCount ?: 0) + 1,
             lastPlayedAt = System.currentTimeMillis(),
         )
-        d.copy(stats = listOf(next) + d.stats.filterNot { it.track.id == t.id })
+        d.copy(stats = (listOf(next) + d.stats.filterNot { it.track.id == t.id }).take(500))
     }
 
     fun recordSkip(t: Track) = edit { d ->
@@ -158,7 +213,7 @@ class LibraryStore(context: Context) {
             skipCount = (old?.skipCount ?: 0) + 1,
             lastPlayedAt = old?.lastPlayedAt ?: System.currentTimeMillis(),
         )
-        d.copy(stats = listOf(next) + d.stats.filterNot { it.track.id == t.id })
+        d.copy(stats = (listOf(next) + d.stats.filterNot { it.track.id == t.id }).take(500))
     }
 
     fun addDownload(t: Track) = edit { d ->
@@ -166,13 +221,15 @@ class LibraryStore(context: Context) {
     }
 
     fun removeDownload(id: String) {
-        fileFor(id).delete()
         edit { d -> d.copy(downloads = d.downloads.filterNot { it.id == id }) }
+        ioExecutor.execute { fileFor(id).delete() }
     }
 
-    /** Bila lagu sudah di-download, putar dari file hasil download; selain itu stream dari API. */
     fun resolve(t: Track): Track {
+        if (t.source != MusicSource.AUDIUS) return t
         val f = fileFor(t.id)
-        return if (_data.value.isDownloaded(t.id) && f.exists()) t.copy(streamUri = Uri.fromFile(f).toString()) else t.clean()
+        return if (_data.value.isDownloaded(t.id) && f.exists()) {
+            t.copy(streamUri = Uri.fromFile(f).toString())
+        } else t.clean()
     }
 }
