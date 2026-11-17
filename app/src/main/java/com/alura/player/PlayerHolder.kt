@@ -23,8 +23,12 @@ data class PS(val track: Track?, val playing: Boolean, val pos: Long, val dur: L
 /** Satu player untuk stream Audius dan salinan hasil download, dipakai UI dan service. */
 object PlayerHolder {
     private var exo: ExoPlayer? = null
+    private val _queueFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Track>>(emptyList())
+    val queueFlow: kotlinx.coroutines.flow.StateFlow<List<Track>> = _queueFlow
     var queue: List<Track> = emptyList()
-        private set
+        private set(v) { field = v; _queueFlow.value = v }
+
+    fun peek(): ExoPlayer? = exo
 
     fun player(ctx: Context): ExoPlayer = exo ?: ExoPlayer.Builder(ctx.applicationContext)
         .setMediaSourceFactory(
@@ -41,7 +45,20 @@ object PlayerHolder {
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true
         )
         .setHandleAudioBecomingNoisy(true)
-        .build().also { exo = it }
+        .setWakeMode(C.WAKE_MODE_NETWORK)
+        .setLoadControl(
+            androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(30_000, 120_000, 2_000, 5_000).build()
+        )
+        .build().also { p ->
+            exo = p
+            com.alura.data.AppSettings.init(ctx)
+            val app = ctx.applicationContext
+            p.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) { PlayerWidget.refresh(app); IslandOverlay.refresh(app) }
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { PlayerWidget.refresh(app); IslandOverlay.refresh(app, expand = true) }
+            })
+        }
 
     fun play(ctx: Context, tracks: List<Track>, index: Int) {
         val p = player(ctx)
@@ -60,6 +77,34 @@ object PlayerHolder {
         p.replaceMediaItem(index, t.toItem())
         p.prepare()
         p.play()
+    }
+
+    /** Sisipkan tepat setelah lagu yang sedang diputar. */
+    fun addNext(ctx: Context, t: Track) {
+        val p = player(ctx)
+        if (queue.isEmpty() || p.mediaItemCount == 0) { play(ctx, listOf(t), 0); return }
+        val at = (p.currentMediaItemIndex + 1).coerceIn(0, queue.size)
+        queue = queue.toMutableList().also { it.add(at, t) }
+        p.addMediaItem(at, t.toItem())
+    }
+
+    fun addLast(ctx: Context, t: Track) {
+        val p = player(ctx)
+        if (queue.isEmpty() || p.mediaItemCount == 0) { play(ctx, listOf(t), 0); return }
+        queue = queue + t
+        p.addMediaItem(t.toItem())
+    }
+
+    fun move(ctx: Context, from: Int, to: Int) {
+        if (from !in queue.indices || to !in queue.indices || from == to) return
+        player(ctx).moveMediaItem(from, to)
+        queue = queue.toMutableList().also { it.add(to, it.removeAt(from)) }
+    }
+
+    fun removeAt(ctx: Context, i: Int) {
+        if (i !in queue.indices) return
+        player(ctx).removeMediaItem(i)
+        queue = queue.toMutableList().also { it.removeAt(i) }
     }
 
     private fun Track.toItem() = MediaItem.Builder()

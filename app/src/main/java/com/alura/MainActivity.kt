@@ -71,6 +71,7 @@ fun AluraApp(
     onStyleChange: (AluraStyle) -> Unit = {}
 ) {
     val context = LocalContext.current
+    remember { com.alura.data.AppSettings.init(context) }
     val player = remember { PlayerHolder.player(context) }
     // State ini hanya berubah saat event player, bukan setiap 400-1500 ms.
     val playerState = rememberPlayerState(player)
@@ -79,34 +80,20 @@ fun AluraApp(
     val stateHolder = rememberSaveableStateHolder()
     var about by rememberSaveable { mutableStateOf(false) }
     var settings by rememberSaveable { mutableStateOf(false) }
+    var recap by rememberSaveable { mutableStateOf(false) }
     var pageIndex by rememberSaveable { mutableIntStateOf(-1) }
     var fullPlayer by rememberSaveable { mutableStateOf(false) }
     var navVisible by remember { mutableStateOf(true) }
 
-    val audioPermission = remember {
-        if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
-        else Manifest.permission.READ_EXTERNAL_STORAGE
-    }
     val permissions = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result[audioPermission] == true) vm.loadLocal()
-        else vm.setLocalUnavailable()
-    }
+    ) { }
 
     LaunchedEffect(Unit) {
-        val hasAudio = context.checkSelfPermission(audioPermission) == PackageManager.PERMISSION_GRANTED
-        if (hasAudio) {
-            vm.loadLocal()
-        } else {
-            val requested = buildList {
-                add(audioPermission)
-                if (Build.VERSION.SDK_INT >= 33 &&
-                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                ) add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            permissions.launch(requested.toTypedArray())
-        }
+        vm.setLocalUnavailable()
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) permissions.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
     }
 
     LaunchedEffect(Unit) {
@@ -117,8 +104,9 @@ fun AluraApp(
     BackHandler(enabled = !fullPlayer && pageIndex >= 0) { pageIndex = -1 }
     BackHandler(enabled = !fullPlayer && settings) { settings = false }
     BackHandler(enabled = !fullPlayer && !settings && about) { about = false }
+    BackHandler(enabled = !fullPlayer && !settings && !about && recap) { recap = false }
 
-    val mainVisible = !fullPlayer && pageIndex < 0 && !about && !settings
+    val mainVisible = !fullPlayer && pageIndex < 0 && !about && !settings && !recap
     val showNav = mainVisible && navVisible
     val navMotion = spring<androidx.compose.ui.unit.Dp>(
         dampingRatio = 0.88f,
@@ -161,10 +149,13 @@ fun AluraApp(
                     PlayerScreen(vm, playerState, player) { fullPlayer = false }
                 }
                 settings -> {
-                    SettingsScreen(currentStyle, onStyleChange) { settings = false }
+                    SettingsScreen(currentStyle, onStyleChange, extra = { ExtraSettings(vm) }) { settings = false }
                 }
                 about -> {
                     AboutScreen { about = false }
+                }
+                recap -> {
+                    RecapScreen(vm) { recap = false }
                 }
                 pageIndex >= 0 -> {
                     val page = LibPage.values().getOrNull(pageIndex) ?: LibPage.PLAYLISTS
@@ -179,7 +170,8 @@ fun AluraApp(
                                 vm = vm,
                                 onOpen = { pageIndex = it.ordinal },
                                 onAbout = { about = true },
-                                onSettings = { settings = true }
+                                onSettings = { settings = true },
+                                onRecap = { recap = true }
                             )
                         }
                     }

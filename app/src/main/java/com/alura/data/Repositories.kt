@@ -40,6 +40,7 @@ class AudiusRepository(private val api: AudiusApi = audiusApi) {
         id = id, title = title, artist = user.name,
         artworkUrl = artwork?.medium ?: artwork?.small,
         durationSec = duration, streamUri = audiusStreamUrl(id), genre = genre, artistId = user.id,
+        popularity = playCount.toLong(),
     )
 
     private fun fresh(key: String) =

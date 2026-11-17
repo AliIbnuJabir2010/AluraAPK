@@ -18,6 +18,7 @@ data class Track(
     val genre: String? = null,
     val artistId: String = "",
     val source: MusicSource = MusicSource.AUDIUS,
+    val popularity: Long = 0,       // jumlah pemutaran/penonton bila diketahui
 )
 
 data class Artist(val id: String, val name: String, val handle: String, val avatarUrl: String?, val followers: Int)

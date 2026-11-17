@@ -113,6 +113,8 @@ fun rememberPlaybackProgress(player: Player, playing: Boolean): Pair<Long, Long>
 
 private val PALETTE = listOf(0xFF2B4A85, 0xFF2F3A7A, 0xFF1F5560, 0xFF4A2F6E, 0xFF6E4A2F)
 
+internal fun artTint(t: Track?): Color = Color(PALETTE[(t?.id?.hashCode() ?: 0).absoluteValue % PALETTE.size])
+
 @Composable
 fun Art(t: Track?, size: Dp?, radius: Dp, modifier: Modifier = Modifier) {
     val c = Color(PALETTE[(t?.id?.hashCode() ?: 0).absoluteValue % PALETTE.size])
@@ -120,7 +122,7 @@ fun Art(t: Track?, size: Dp?, radius: Dp, modifier: Modifier = Modifier) {
     Box(
         (if (size != null) modifier.size(size) else modifier)
             .clip(RoundedCornerShape(radius))
-            .background(Brush.linearGradient(listOf(c, Color(0xFF0B1222)))),
+            .background(Brush.linearGradient(listOf(c, Color(0xFF121212)))),
         Alignment.Center
     ) {
         if (url != null) AsyncImage(url, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -150,31 +152,24 @@ fun TrackRow(
     val progressPercent = pct
     var menu by remember { mutableStateOf(false) }
     var pick by remember { mutableStateOf(false) }
-    val sourceLabel = when (t.source) {
-        MusicSource.AUDIUS -> "Audius"
-        MusicSource.YOUTUBE -> "YouTube Music"
-        MusicSource.LOCAL -> "Lokal"
-    }
-    val sub = t.artist + " · " + sourceLabel + when {
-        saved -> " · Offline"
-        progressPercent != null -> if (progressPercent >= 0) " \u00B7 Mengunduh $progressPercent%" else " \u00B7 Mengunduh\u2026"
-        else -> ""
-    }
+    val sub = if (progressPercent != null) {
+        t.artist + if (progressPercent >= 0) " \u00B7 Mengunduh $progressPercent%" else " \u00B7 Mengunduh\u2026"
+    } else t.artist
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Art(t, 46.dp, 10.dp)
+        Art(t, 48.dp, 4.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(t.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (current) Acc else Txt,
+            Text(t.title, fontSize = 16.sp, color = if (current) Acc else Txt,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(sub, fontSize = 12.sp, color = Mut, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, fontSize = 14.sp, color = Mut, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (fav) {
             Box(Modifier.size(38.dp).clip(CircleShape).clickable { vm.toggleFavorite(t) }, Alignment.Center) {
                 Box(Modifier.size(22.dp).clip(CircleShape).background(Acc), Alignment.Center) {
-                    Ico(Icons.CHECK, Color.White, 14.dp)
+                    Ico(Icons.CHECK, Color(0xFF121212), 14.dp)
                 }
             }
         }
@@ -186,10 +181,18 @@ fun TrackRow(
                     onClick = { menu = false; vm.toggleFavorite(t) }
                 )
                 DropdownMenuItem(
+                    text = { Text("Putar berikutnya", color = Txt) },
+                    onClick = { menu = false; vm.playNext(t) }
+                )
+                DropdownMenuItem(
+                    text = { Text("Tambah ke antrean", color = Txt) },
+                    onClick = { menu = false; vm.addToQueue(t) }
+                )
+                DropdownMenuItem(
                     text = { Text("+ Daftar putar", color = Txt) },
                     onClick = { menu = false; pick = true }
                 )
-                if (t.source == MusicSource.AUDIUS) DropdownMenuItem(
+                if (t.source != MusicSource.LOCAL) DropdownMenuItem(
                     text = { Text(if (saved) "Hapus download" else "Download", color = Txt) },
                     onClick = { menu = false; if (saved) vm.deleteDownload(t.id) else vm.download(t) }
                 )
@@ -273,13 +276,13 @@ fun AddToPlaylistDialog(vm: AppViewModel, t: Track, onDismiss: () -> Unit) {
 
 @Composable
 fun SectionTitle(text: String) {
-    Text(text, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 10.dp))
+    Text(text, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 28.dp, bottom = 12.dp))
 }
 
 @Composable
 fun MenuRow(title: String, sub: String? = null, onClick: (() -> Unit)? = null) {
     Row(
-        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(14.dp)).background(CardC)
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(8.dp)).background(CardC)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -377,23 +380,30 @@ fun LazyListScope.trackSection(
 @Composable
 fun MiniPlayer(ps: PS, p: Player, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val t = ps.track ?: return
-    Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Card2)
-            .border(BorderStroke(1.dp, Line), RoundedCornerShape(16.dp))
-            .clickable(onClick = onOpen).padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    val (position, duration) = rememberPlaybackProgress(p, ps.playing)
+    val frac = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val shape = RoundedCornerShape(8.dp)
+    Column(
+        modifier.fillMaxWidth().clip(shape)
+            .background(androidx.compose.ui.graphics.lerp(artTint(t), Color.Black, .35f))
+            .clickable(onClick = onOpen)
     ) {
-        Art(t, 40.dp, 10.dp)
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(t.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(t.artist, fontSize = 11.sp, color = Mut, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Art(t, 40.dp, 4.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(t.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(t.artist, fontSize = 12.sp, color = Color.White.copy(.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.size(40.dp).clickable { if (p.isPlaying) p.pause() else p.play() }, Alignment.Center) {
+                Ico(if (ps.playing) Icons.PAUSE else Icons.PLAY, Color.White, 22.dp)
+            }
+            Box(Modifier.size(40.dp).clickable { p.seekToNextMediaItem() }, Alignment.Center) {
+                Ico(Icons.NEXT, Color.White, 22.dp)
+            }
         }
-        Box(Modifier.size(40.dp).clickable { if (p.isPlaying) p.pause() else p.play() }, Alignment.Center) {
-            Ico(if (ps.playing) Icons.PAUSE else Icons.PLAY, Txt, 20.dp)
-        }
-        Box(Modifier.size(40.dp).clickable { p.seekToNextMediaItem() }, Alignment.Center) {
-            Ico(Icons.NEXT, Txt, 20.dp)
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Color.White.copy(.25f))) {
+            Box(Modifier.fillMaxWidth(frac).fillMaxHeight().background(Color.White))
         }
     }
 }

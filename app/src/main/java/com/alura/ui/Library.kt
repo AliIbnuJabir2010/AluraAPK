@@ -3,6 +3,7 @@ package com.alura.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,31 @@ import com.alura.player.PS
 enum class LibPage(val title: String) {
     PLAYLISTS("Playlist Manual"), FAVORITES("Favorit"), DOWNLOADS("Download"), LOCAL("Musik di Perangkat"),
     MOST_PLAYED("Sering Diputar"), RECENTLY_PLAYED("Baru Didengarkan"), YOUR_MIX("Mix Kamu")
+}
+
+@Composable
+private fun SpotifyImportBox(vm: AppViewModel) {
+    var link by remember { mutableStateOf("") }
+    val status by vm.importStatus.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        androidx.compose.foundation.text.BasicTextField(
+            value = link, onValueChange = { link = it }, singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(color = Txt, fontSize = 14.sp),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(Acc),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Go),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = {
+                if (link.isNotBlank()) { vm.importSpotify(link.trim()); link = "" }
+            }),
+            modifier = Modifier.fillMaxWidth(),
+            decorationBox = { inner ->
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Card2).padding(14.dp)) {
+                    if (link.isEmpty()) Text("Impor dari Spotify: tempel link playlist, lalu Enter", color = Mut, fontSize = 14.sp)
+                    inner()
+                }
+            }
+        )
+        status?.let { Text(it, color = Mut, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
+    }
 }
 
 @Composable
@@ -74,6 +100,7 @@ fun LibraryScreen(vm: AppViewModel, ps: PS, page: LibPage, onBack: () -> Unit) {
                     }
                 }
                 page == LibPage.PLAYLISTS && open == null -> {
+                    item { SpotifyImportBox(vm) }
                     if (lib.playlists.isEmpty()) item {
                         Text("Belum ada playlist. Ketuk + untuk membuat.", color = Mut, fontSize = 13.sp)
                     }

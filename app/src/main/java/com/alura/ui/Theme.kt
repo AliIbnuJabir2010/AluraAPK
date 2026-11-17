@@ -30,13 +30,13 @@ var activeAluraStyle by mutableStateOf(AluraStyle.LIQUID_GLASS)
 
 fun setAluraStyle(style: AluraStyle) { activeAluraStyle = style }
 
-val Bg: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFF5F1E8) else Color(0xFF070B14)
-val CardC: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFFFFCF5) else Color(0xFF111A2B)
-val Card2: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFEAE4D8) else Color(0xFF16213A)
-val Txt: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF242630) else Color(0xFFE8EDF7)
-val Mut: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF77746E) else Color(0xFF8B97B1)
-val Acc: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF315E9B) else Color(0xFF4F8DFF)
-val Line: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFD8D0C2) else Color(0xFF1F2A44)
+val Bg: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFF5F1E8) else Color(0xFF121212)
+val CardC: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFFFFCF5) else Color(0xFF1A1A1A)
+val Card2: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFEAE4D8) else Color(0xFF2A2A2A)
+val Txt: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF242630) else Color(0xFFFFFFFF)
+val Mut: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF77746E) else Color(0xFFA7A7A7)
+val Acc: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFF315E9B) else Color(0xFF1ED760)
+val Line: Color get() = if (activeAluraStyle == AluraStyle.PAPER) Color(0xFFD8D0C2) else Color(0xFF2A2A2A)
 
 @Composable
 fun AluraTheme(content: @Composable () -> Unit) {
@@ -67,7 +67,13 @@ object Icons {
     val HEART_FILL = IcoSpec(HEART_PATH, fill = true)
     val DOWNLOAD = IcoSpec("M12 4v11M7 11l5 5 5-5M5 20h14")
     val PLUS = IcoSpec("M12 5v14M5 12h14")
+    val UP = IcoSpec("M6 15l6-6 6 6")
+    val DOWN = IcoSpec("M6 9l6 6 6-6")
+    val CLOSE = IcoSpec("M6 6l12 12M18 6L6 18")
+    val QUEUE = IcoSpec("M4 7h13M4 12h13M4 17h8M17 15v6M14 18h6")
     val CHECK = IcoSpec("M5 12.5l4.5 4.5L19 7.5")
+    val SPEAKER = IcoSpec("M3.5 9.5H7L11.5 5.5v13L7 14.5H3.5z", fill = true)
+    val WAVES = IcoSpec("M15 9.5a3.5 3.5 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10")
 }
 
 @Composable

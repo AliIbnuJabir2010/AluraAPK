@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import okhttp3.Request
@@ -130,6 +133,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         local.value = emptyList()
     }
 
+    /** 0 = Semua, 1 = Artis Asli, 2 = Cover */
+    val searchFilter = MutableStateFlow(0)
+    fun setSearchFilter(i: Int) { searchFilter.value = i }
+    fun isOriginal(t: Track) = isOriginalTrack(t, query.value, artistAffinity(lib.value))
+
     fun setQuery(q: String) { query.value = q; search(450) }
     fun setCategory(c: Category) { category.value = if (category.value == c) null else c; search(0) }
 
@@ -146,14 +154,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             delay(delayMs)
             if (q.isNotEmpty()) {
-                val localHits = local.value.filter {
-                    it.title.contains(q, ignoreCase = true) || it.artist.contains(q, ignoreCase = true)
-                }
-                results.value = if (localHits.isEmpty()) Resource.Loading else Resource.Success(localHits)
                 val online = searchAuto(q)
                 val onlineTracks = (online as? Resource.Success)?.data.orEmpty()
-                val combined = (localHits + onlineTracks).distinctBy { it.id }
-                results.value = if (combined.isNotEmpty()) Resource.Success(combined) else online
+                val combined = onlineTracks.distinctBy { it.id }
+                val ranked = rankTracks(combined, q, artistAffinity(lib.value))
+                results.value = if (ranked.isNotEmpty()) Resource.Success(ranked) else online
             } else {
                 results.value = Resource.Loading
                 results.value = categoryAuto(c!!)
@@ -213,11 +218,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (next != null && sessionTrack?.id != next.id) beginStatsSession(next)
         }
 
+        private var retryCount = 0
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) { if (isPlaying) retryCount = 0 }
+
         override fun onPlayerError(error: PlaybackException) {
             val p = PlayerHolder.player(getApplication())
             val i = p.currentMediaItemIndex
             val t = PlayerHolder.queue.getOrNull(i) ?: return
-            if (t.source != MusicSource.YOUTUBE) return
+            // Putus sambungan / alamat kedaluwarsa: coba lagi dari posisi terakhir (maks 2x) sebelum menyerah.
+            if (retryCount < 2) {
+                retryCount++
+                if (t.source == MusicSource.YOUTUBE) com.alura.data.YouTubeMusic.invalidate(t.streamUri.removePrefix("ytm://"))
+                val pos = p.currentPosition
+                viewModelScope.launch {
+                    delay(800L * retryCount)
+                    p.seekTo(i, pos)
+                    p.prepare()
+                    p.play()
+                }
+                return
+            }
+            if (t.source != MusicSource.YOUTUBE) { say("Lagu tidak bisa diputar"); return }
             viewModelScope.launch {
                 val alt = (audius.searchSmart("${t.title} ${t.artist}", strict = true) as? Resource.Success)?.data?.firstOrNull()
                 if (alt != null) {
@@ -334,16 +356,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Download (audio diambil dari API Audius, disimpan untuk diputar offline) ----
     fun download(track: Track) {
-        if (track.source != MusicSource.AUDIUS) { say("Download hanya tersedia untuk lagu Audius"); return }
+        if (track.source == MusicSource.LOCAL) { say("Lagu ini sudah ada di perangkat"); return }
+        if (AppSettings.wifiOnly && !onWifi()) { say("Download hanya lewat WiFi (lihat Pengaturan)"); return }
         val id = track.id
         if (lib.value.isDownloaded(id)) { say("Sudah ada di Download"); return }
         if (downloading.value.containsKey(id)) return
-        val t = track.copy(streamUri = audiusStreamUrl(id))
+        val t = if (track.source == MusicSource.AUDIUS) track.copy(streamUri = audiusStreamUrl(id)) else track
         downloading.update { it + (id to 0) }
         viewModelScope.launch(Dispatchers.IO) {
             val part = store.partFor(id)
             try {
-                audiusHttpClient.newCall(Request.Builder().url(t.streamUri).build()).execute().use { r ->
+                val url = if (track.source == MusicSource.YOUTUBE) YouTubeMusic.audioUrl(track.streamUri.removePrefix("ytm://")) else t.streamUri
+                audiusHttpClient.newCall(Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Linux; Android 13)").build()).execute().use { r ->
                     if (!r.isSuccessful) throw java.io.IOException("HTTP ${r.code}")
                     val body = r.body ?: throw java.io.IOException("Respons kosong")
                     val total = body.contentLength()
@@ -383,6 +407,58 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    fun resetRecap() = store.resetStats()
+    fun deleteAllDownloads() { lib.value.downloads.toList().forEach { store.removeDownload(it.id) } }
+
+    private fun onWifi(): Boolean {
+        val cm = getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    // ---- Impor playlist Spotify ----
+    val importStatus = MutableStateFlow<String?>(null)
+    private var importing = false
+
+    private suspend fun matchTrack(title: String, artist: String, aff: Map<String, Int>): Track? {
+        val q = "$artist $title".trim()
+        val pool = (yt.search(q) as? Resource.Success)?.data.orEmpty()
+            .ifEmpty { (audius.searchSmart(q) as? Resource.Success)?.data.orEmpty() }
+        return rankTracks(pool, q, aff).firstOrNull()
+    }
+
+    fun importSpotify(link: String) {
+        if (importing) { say("Impor sedang berjalan"); return }
+        importing = true
+        viewModelScope.launch {
+            try {
+                importStatus.value = "Mengambil playlist\u2026"
+                val (name, items) = SpotifyImport.fetch(link)
+                val pid = store.createPlaylist(name)
+                val aff = artistAffinity(lib.value)
+                var ok = 0
+                items.chunked(4).forEachIndexed { ci, chunk ->
+                    val found = coroutineScope { chunk.map { (title, artist) -> async { runCatching { matchTrack(title, artist, aff) }.getOrNull() } }.awaitAll() }
+                    found.forEach { t -> if (t != null && store.addToPlaylist(pid, t)) ok++ }
+                    importStatus.value = "Mengimpor ${minOf((ci + 1) * 4, items.size)}/${items.size}\u2026"
+                }
+                importStatus.value = "Selesai: $ok dari ${items.size} lagu masuk ke \"$name\""
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                importStatus.value = e.message ?: "Gagal mengimpor"
+            } finally {
+                importing = false
+            }
+        }
+    }
+
+    fun playNext(t: Track) { PlayerHolder.addNext(getApplication(), store.resolve(t)); say("Diputar berikutnya") }
+    fun addToQueue(t: Track) { PlayerHolder.addLast(getApplication(), store.resolve(t)); say("Ditambahkan ke antrean") }
+    fun moveInQueue(from: Int, to: Int) = PlayerHolder.move(getApplication(), from, to)
+    fun removeFromQueue(i: Int) = PlayerHolder.removeAt(getApplication(), i)
 
     fun deleteDownload(id: String) { store.removeDownload(id); say("Download dihapus") }
 }

@@ -82,14 +82,19 @@ object YouTubeMusic {
             artworkUrl = thumbnails.lastOrNull()?.url,
             durationSec = duration.coerceAtLeast(0).toInt(),
             streamUri = "ytm://$vid", source = MusicSource.YOUTUBE,
+            popularity = viewCount.coerceAtLeast(0),
         )
     }
 
     private val urlCache = ConcurrentHashMap<String, Pair<String, Long>>()
 
+    /** Buang alamat audio yang sudah kedaluwarsa agar diambil ulang. */
+    fun invalidate(videoId: String) { urlCache.remove("$videoId|true"); urlCache.remove("$videoId|false") }
+
     /** Dipanggil pemutar (thread pemuat) saat mulai memutar; alamat audio YouTube kedaluwarsa, jadi di-cache 3 jam. */
     fun audioUrl(videoId: String): String {
-        urlCache[videoId]?.takeIf { System.currentTimeMillis() - it.second < 3 * 3600_000L }?.let { return it.first }
+        val key = "$videoId|${AppSettings.lowData}"
+        urlCache[key]?.takeIf { System.currentTimeMillis() - it.second < 3 * 3600_000L }?.let { return it.first }
         ensureInit()
         val info = try {
             StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
@@ -97,10 +102,11 @@ object YouTubeMusic {
             throw IOException("Gagal memuat audio YouTube: ${e.message}", e)
         }
         val audios = info.audioStreams.filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-        val best = audios.filter { it.format == MediaFormat.M4A }.maxByOrNull { it.averageBitrate }
-            ?: audios.maxByOrNull { it.averageBitrate }
+        val m4a = audios.filter { it.format == MediaFormat.M4A }.ifEmpty { audios }
+        val best = (if (AppSettings.lowData) m4a.filter { it.averageBitrate > 0 }.minByOrNull { it.averageBitrate } else null)
+            ?: m4a.maxByOrNull { it.averageBitrate }
             ?: throw IOException("Audio tidak ditemukan")
-        urlCache[videoId] = best.content to System.currentTimeMillis()
+        urlCache[key] = best.content to System.currentTimeMillis()
         return best.content
     }
 }

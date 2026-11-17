@@ -133,7 +133,9 @@ class LibraryStore(context: Context) {
 
     /** Simpan URL stream asli, bukan URI file hasil download. */
     private fun Track.clean(): Track =
-        if (streamUri.startsWith("file:")) copy(streamUri = audiusStreamUrl(id)) else this
+        if (!streamUri.startsWith("file:")) this
+        else if (source == MusicSource.YOUTUBE) copy(streamUri = "ytm://${id.removePrefix("yt_")}")
+        else copy(streamUri = audiusStreamUrl(id))
 
     fun toggleFavorite(t: Track): Boolean {
         var added = false
@@ -225,8 +227,10 @@ class LibraryStore(context: Context) {
         ioExecutor.execute { fileFor(id).delete() }
     }
 
+    fun resetStats() = edit { it.copy(stats = emptyList()) }
+
     fun resolve(t: Track): Track {
-        if (t.source != MusicSource.AUDIUS) return t
+        if (t.source == MusicSource.LOCAL) return t
         val f = fileFor(t.id)
         return if (_data.value.isDownloaded(t.id) && f.exists()) {
             t.copy(streamUri = Uri.fromFile(f).toString())
